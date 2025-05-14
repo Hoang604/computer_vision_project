@@ -93,15 +93,12 @@ def train_rrdb_main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train RRDBNet Model")
     
-    # Dataset args (tương tự script diffusion của bạn)
     parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/images160x160", help='Path to the image folder for HR images')
     parser.add_argument('--img_size', type=int, default=160, help='Target HR image size (images will be resized to this)')
-    # parser.add_argument('--img_channels', type=int, default=3, help='Number of image channels (thường là 3 cho RGB)') # RRDBNet thường mặc định in_nc=3, out_nc=3
     parser.add_argument('--downscale_factor', type=int, default=4, help='Factor to downscale HR to get LR (determines sr_scale)')
     
-    # RRDBNet Model args (tham khảo SRDiff configs/rrdb/*)
     parser.add_argument('--rrdb_num_feat', type=int, default=64, help='Number of features (nf) in RRDBNet (SRDiff: hidden_size)')
-    parser.add_argument('--rrdb_num_block', type=int, default=16, help='Number of RRDB blocks (nb) in RRDBNet (SRDiff: num_block, vd: 17 cho df2k, 8 cho celeba)')
+    parser.add_argument('--rrdb_num_block', type=int, default=8, help='Number of RRDB blocks (nb) in RRDBNet (SRDiff: num_block, vd: 17 cho df2k, 8 cho celeba)')
     parser.add_argument('--rrdb_gc', type=int, default=32, help='Growth channel (gc) in RRDBNet')
     
     # Training args
@@ -121,7 +118,7 @@ if __name__ == "__main__":
     parser.add_argument('--scheduler_gamma', type=float, default=0.5, help='StepLR gamma (SRDiff RRDB: 0.5)')
     
     # Logging/Saving args
-    parser.add_argument('--exp_name', type=str, default='rrdb_experiment', help='Experiment name for subdirectories')
+    parser.add_argument('--exp_name', type=str, default=None, help='Experiment name for subdirectories')
     parser.add_argument('--base_log_dir', type=str, default='logs_rrdb', help='Base directory for logging')
     parser.add_argument('--base_checkpoint_dir', type=str, default='checkpoints_rrdb', help='Base directory for saving checkpoints')
     parser.add_argument('--continue_log_dir', type=str, default=None, help='Specific directory to continue logging (overrides exp_name logic)')
