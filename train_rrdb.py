@@ -115,7 +115,7 @@ if __name__ == "__main__":
     
     # Training args
     parser.add_argument('--device', type=str, default='cuda:0', help='Device to train on (e.g., cuda:0, cpu)')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
     parser.add_argument('--accumulation_steps', type=int, default=1, help='Gradient accumulation steps')
     parser.add_argument('--learning_rate', type=float, default=2e-4, help='Optimizer learning rate')
