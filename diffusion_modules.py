@@ -190,7 +190,7 @@ class Unet(nn.Module):
                  base_dim=64, 
                  out_dim=3, 
                  dim_mults=(1, 2, 4, 8), 
-                 cond_dim=32,
+                 cond_dim=64,
                  rrdb_num_blocks=8,
                  sr_scale=4,
                  use_attention=False,

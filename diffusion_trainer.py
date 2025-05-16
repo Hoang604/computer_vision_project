@@ -268,7 +268,7 @@ class DiffusionTrainer:
         return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step
 
     def _log_and_checkpoint_epoch_end(self, epoch, model, optimizer, scheduler, epoch_losses, current_best_loss,
-                                        global_step_optimizer, best_checkpoint_path, writer, dataset): # Added scheduler
+                                        global_step_optimizer, best_checkpoint_path, writer, dataset, context_extractor): # Added context_extractor
         """Handle end-of-epoch tasks: log loss, save checkpoint, step scheduler, generate sample images."""
         mean_loss = np.mean(epoch_losses) if epoch_losses else float('nan') # Calculate mean loss for the epoch
         print(f"Epoch {epoch+1} Average Loss ({self.mode}): {mean_loss:.4f}") # Log epoch average loss
@@ -305,19 +305,21 @@ class DiffusionTrainer:
             print(f"Scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") # Log scheduler step
 
         if (epoch + 1) % 5 == 0: # Generate sample images every 5 epochs (configurable)
-            self._generate_and_log_samples(model, dataset, epoch, writer) # Generate and log samples
-
+            try:
+                self._generate_and_log_samples(model, dataset, epoch, writer, context_extractor) # Pass context_extractor
+            except Exception as e:
+                pass
         return new_best_loss
 
-    def _generate_and_log_samples(self, model, dataset, epoch, writer):
+    def _generate_and_log_samples(self, model, dataset, epoch, writer, context_extractor): # Added context_extractor
         """Generate sample images and log to TensorBoard."""
 
         print(f"Generating sample images for TensorBoard at epoch {epoch+1}...") # Log sample generation start
         try:
             # Assuming ResidualGenerator is defined and accessible
             generator = ResidualGenerator(
-                img_channels=model.final_conv[-1].out_channels if hasattr(model, 'final_conv') else 3, # Infer channels if possible
-                img_size=dataset.dataset.img_size if hasattr(dataset, 'dataset') else 160, # Infer img_size
+                img_channels=model.final_conv[-1].out_channels if hasattr(model, 'final_conv') and hasattr(model.final_conv[-1], 'out_channels') else 3, # Infer channels if possible
+                img_size=dataset.dataset.img_size if hasattr(dataset, 'dataset') and hasattr(dataset.dataset, 'img_size') else 160, # Infer img_size
                 device=self.device,
                 num_train_timesteps=self.timesteps,
                 predict_mode=self.mode # Use the trainer's mode for the generator
@@ -337,12 +339,6 @@ class DiffusionTrainer:
             print("Warning: Dataset is empty or too small. Skipping sample generation.") # Log warning
             return
 
-        # Need context_extractor for generation if model expects it
-        # This part requires careful handling of how context is passed during generation
-        # For simplicity, this example might need adjustment based on your exact model's forward pass for generation.
-        # Let's assume for now the model's `generate_residuals` or similar method handles context internally or doesn't need it explicitly here.
-        # If context_extractor is needed, it should be passed or made accessible.
-
         dataset_iter = iter(dataset) # Create an iterator for the dataset
         for _ in range(num_samples_to_generate):
             try:
@@ -358,20 +354,13 @@ class DiffusionTrainer:
             original_img_cpu = original_b[0].cpu().numpy() # Original HR image (CPU, numpy)
             residual_img_for_recon = residual_b_cpu[0].unsqueeze(0).to(self.device) # Ground truth residual
 
-            # This is a placeholder for how context features would be extracted for generation.
-            # It needs to match how the model expects `condition` during its forward pass.
-            # If the U-Net's forward pass during training is `model(x, t, condition=condition_features_list)`
-            # then `condition_features_list` needs to be generated here too.
-            # For simplicity, we'll assume `generate_residuals` handles this or takes raw `low_res_img`.
-            # You might need to pass `context_extractor` to `ResidualGenerator` or call it here.
-            # Example if context_extractor is available:
-            # with torch.no_grad():
-            #     _, condition_features_list_gen = context_extractor(low_res_img, get_fea=True)
-
-            # Generate residual using the generator
-            # The `generate_residuals` method needs to be adapted if it requires explicit context features.
-            # Current `ResidualGenerator.generate_residuals` takes `model` and `low_resolution_image` (which might be the context).
-            generated_residual = generator.generate_residuals(model=model, low_resolution_image=low_res_img, num_images=1)
+            # Generate residual using the generator, now passing context_extractor
+            generated_residual = generator.generate_residuals(
+                model=model,
+                low_resolution_image=low_res_img,
+                context_extractor=context_extractor, # Pass the context_extractor
+                num_images=1
+            )
             reconstructed_image = up_scale_img + generated_residual # Reconstruct HR image
             reconstructed_image = torch.clamp(reconstructed_image, -1.0, 1.0) # Clamp to [-1, 1]
             reconstructed_image_norm = (reconstructed_image + 1.0) / 2.0 # Normalize to [0, 1] for logging
@@ -466,8 +455,8 @@ class DiffusionTrainer:
 
             # Handle end of epoch tasks
             best_loss = self._log_and_checkpoint_epoch_end(
-                epoch, model, optimizer, scheduler, epoch_losses, best_loss, # Pass scheduler
-                global_step_optimizer, best_checkpoint_path, writer, dataset # Pass dataset for sampling
+                epoch, model, optimizer, scheduler, epoch_losses, best_loss, 
+                global_step_optimizer, best_checkpoint_path, writer, dataset, context_extractor # Pass context_extractor
             )
             progress_bar.close() # Close progress bar for the epoch
 
@@ -722,7 +711,7 @@ class ResidualGenerator:
             num_train_timesteps=self.num_train_timesteps,
             trained_betas=self.betas.cpu().numpy(), # DDIMScheduler might expect numpy array
             beta_schedule="trained_betas", # Indicate use of pre-computed betas
-            prediction_type=self.predict_mode, # Crucial: sets how scheduler interprets model output
+            prediction_type=self.predict_mode if self.predict_mode == 'v_prediction' else 'epsilon' if self.predict_mode == 'noise' else 'sample', # Crucial: sets how scheduler interprets model output
             clip_sample=False, # Manual clipping is often preferred
             set_alpha_to_one=False, # Standard for cosine schedules
             steps_offset=1, # Common setting
@@ -732,21 +721,18 @@ class ResidualGenerator:
               f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.") # Log init
 
     @torch.no_grad()
-    def generate_residuals(self, model, low_resolution_image, num_images=1, num_inference_steps=50):
+    def generate_residuals(self, model, low_resolution_image, context_extractor, num_images=1, num_inference_steps=50): # Added context_extractor
         """
-        Generates image residuals using the provided diffusion model and the configured scheduler.
+        Generates image residuals using the provided diffusion model, context_extractor, and the configured scheduler.
 
         The model's output (either 'v' or 'noise') should match the
         `predict_mode` this ResidualGenerator was initialized with.
 
         Args:
             model (torch.nn.Module): The pre-trained diffusion model (e.g., a U-Net).
-                                     It should accept `x_t` (noisy image), `t` (timestep),
-                                     and potentially `condition` (e.g., from `low_resolution_image`)
-                                     as input.
             low_resolution_image (torch.Tensor): The low-resolution image to condition the generation on.
                                                  Shape: [batch_size, img_channels, H_lr, W_lr].
-                                                 This is used to form the `condition` for the model.
+            context_extractor (torch.nn.Module): The model used to extract condition features from low_resolution_image.
             num_images (int, optional): Number of images/residuals to generate. Defaults to 1.
                                         Must match the batch size of `low_resolution_image`.
             num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
@@ -757,12 +743,11 @@ class ResidualGenerator:
         """
         model.eval() # Set model to evaluation mode
         model.to(self.device) # Ensure model is on correct device
+        context_extractor.eval() # Set context_extractor to evaluation mode
+        context_extractor.to(self.device) # Ensure context_extractor is on correct device
+
 
         if num_images != low_resolution_image.shape[0]:
-            # This can happen if low_resolution_image is a single sample expanded for batch,
-            # or if num_images is meant to control multiple generations from the *same* LR image.
-            # For now, assume low_resolution_image batch size dictates num_images.
-            # print(f"Warning: num_images ({num_images}) differs from low_resolution_image batch_size ({low_resolution_image.shape[0]}). Using LR batch_size.")
             num_images = low_resolution_image.shape[0]
 
 
@@ -779,29 +764,13 @@ class ResidualGenerator:
         )
         image_latents = image_latents * self.scheduler.init_noise_sigma # Scale initial noise
 
-        # Prepare condition from low_resolution_image.
-        # This step is CRUCIAL and depends on how your `model` and `context_extractor` work.
-        # If `model` expects features from a `context_extractor`:
-        # 1. You need access to the `context_extractor` here.
-        # 2. Extract features: `_, condition_features = context_extractor(low_resolution_image.to(self.device), get_fea=True)`
-        # Then `condition_features` would be passed to `model`.
-        # For this example, we assume `model` can take `low_resolution_image` directly as part of its `condition`
-        # or that the `model`'s forward pass in `Unet` handles this if `condition` is `low_resolution_image`.
-        # The `train_diffusion.py` script passes `condition_features_list` from an RRDBNet.
-        # A similar extraction is needed here if the U-Net expects that.
-        # For simplicity, let's assume the U-Net's forward in `diffusion_modules.py` can handle
-        # `condition` being the `low_resolution_image` directly or pre-extracted features.
-        # If `model` is the U-Net, and its forward is `forward(self, x, time, condition)`,
-        # then `condition` must be prepared appropriately.
-        #
-        # Placeholder for actual conditioning logic:
-        # This would typically involve your context_extractor (e.g., RRDBNet)
-        # For now, we pass low_resolution_image as the `condition` argument,
-        # assuming the model (U-Net) is structured to use it or its features.
-        # If your Unet expects a list of feature maps like in training, you'd need to replicate that here.
-        # This is a simplification for the generator.
-        condition_input_for_model = low_resolution_image.to(self.device)
-
+        # Prepare condition features using the context_extractor
+        with torch.no_grad():
+            # Assuming context_extractor returns (output_image, features_list) when get_fea=True
+            # We need the features_list for the U-Net's condition argument.
+            print(self.device)
+            _, condition_input_for_model = context_extractor(low_resolution_image.to(self.device), get_fea=True)
+            # condition_input_for_model should now be a list of tensors (feature maps)
 
         # Iteratively denoise the latents
         for t_step in tqdm(self.scheduler.timesteps, desc="Generating residuals"):
@@ -810,12 +779,8 @@ class ResidualGenerator:
             t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device) # Timestep for the batch
 
             # Model predicts based on its training (either 'v' or 'noise' for the residual)
-            # The `condition` argument here needs to match what the U-Net expects.
-            # If U-Net's `forward` is `(self, x, time, condition)` where `condition` is a list of features,
-            # then `condition_input_for_model` must be that list.
-            # This is a common point of mismatch if not handled carefully.
-            # For now, assuming it's passed as `condition`.
-            model_output = model(model_input, t_for_model, condition=condition_input_for_model) # Pass condition
+            # Pass the extracted feature list as the condition
+            model_output = model(model_input, t_for_model, condition=condition_input_for_model)
 
             # Scheduler step to compute the previous noisy sample
             scheduler_output = self.scheduler.step(model_output, t_step, image_latents)
@@ -828,7 +793,7 @@ class ResidualGenerator:
 
 if __name__ == "__main__":
     # Example usage for ResidualGenerator (illustrative)
-    # This requires a dummy model and a dummy low_resolution_image for testing.
+    # This requires a dummy model, a dummy low_resolution_image, and a dummy context_extractor for testing.
     print("ResidualGenerator example usage (illustrative):")
     try:
         # Create a dummy Unet-like model for the example
@@ -837,47 +802,87 @@ if __name__ == "__main__":
                 super().__init__()
                 self.in_channels = in_channels
                 self.out_channels = out_channels
-                # A very simple conv layer to simulate the network
                 self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
                 print(f"DummyUnet initialized with in_channels={in_channels}, out_channels={out_channels}")
 
-            def forward(self, x, time, condition=None): # Added condition
-                # x: noisy residual, time: timestep, condition: LR image or its features
-                # This dummy model just passes x through a conv layer, ignoring time and condition for simplicity.
-                # A real Unet would use time embeddings and incorporate condition.
-                # print(f"DummyUnet forward: x.shape={x.shape}, time.shape={time.shape}, condition.shape={condition.shape if condition is not None else 'None'}")
+            def forward(self, x, time, condition=None): # Condition is now a list of features
+                # x: noisy residual, time: timestep, condition: list of feature maps or None
+                # This dummy model just passes x through a conv layer.
+                # A real Unet would use time embeddings and incorporate condition features.
+                # print(f"DummyUnet forward: x.shape={x.shape}, time.shape={time.shape}")
+                # if condition is not None:
+                #     print(f"  Condition is a list of {len(condition)} tensors.")
+                #     for i, c_feat in enumerate(condition):
+                #         print(f"    condition[{i}].shape = {c_feat.shape}")
                 return self.conv(x)
+
+        # Create a dummy context_extractor model for the example
+        class DummyContextExtractor(torch.nn.Module):
+            def __init__(self, num_output_features=9, feature_channels=64): # Simulate RRDBNet with 8 blocks
+                super().__init__()
+                self.num_output_features = num_output_features
+                self.feature_channels = feature_channels
+                # Add a dummy parameter to make it a valid nn.Module and be movable to device
+                self.dummy_param = torch.nn.Parameter(torch.empty(0))
+
+
+            def forward(self, x_lr, get_fea=False):
+                # x_lr: low_resolution_image (B, C, H_lr, W_lr)
+                # Simulate returning a list of feature maps (feas) and a dummy SR output.
+                B, C_in, H_lr, W_lr = x_lr.shape
+                
+                # Dummy SR output (not really used by Unet, but RRDBNet returns it)
+                # Assuming sr_scale = 4 for this dummy
+                sr_scale = 4
+                dummy_sr_out = torch.randn(B, C_in, H_lr * sr_scale, W_lr * sr_scale, device=x_lr.device)
+                
+                features_list = []
+                if get_fea:
+                    for _ in range(self.num_output_features):
+                        # Each feature map has shape (B, feature_channels, H_lr, W_lr)
+                        feat = torch.randn(B, self.feature_channels, H_lr, W_lr, device=x_lr.device)
+                        features_list.append(feat)
+                    return dummy_sr_out, features_list
+                else:
+                    return dummy_sr_out
+
 
         img_c = 3
         hr_size = 160 # Example HR size
         lr_size = hr_size // 4 # Example LR size (if downscale_factor=4)
+        current_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         generator = ResidualGenerator(
             img_channels=img_c,
             img_size=hr_size, # Residuals are generated at HR size
-            device='cuda' if torch.cuda.is_available() else 'cpu',
+            device=current_device,
             num_train_timesteps=1000,
-            predict_mode='v_prediction'
+            predict_mode='v_prediction' # or 'noise'
         )
-        # Dummy Unet model instance
-        unet_example = DummyUnet(in_channels=img_c, out_channels=img_c).to(generator.device)
+        
+        unet_example = DummyUnet(in_channels=img_c, out_channels=img_c).to(current_device)
+        # Dummy context extractor, simulating RRDBNet(number_of_rrdb_blocks=8, rrdb_in_channels=64)
+        # which would produce 8+1=9 feature maps.
+        context_extractor_example = DummyContextExtractor(num_output_features=9, feature_channels=64).to(current_device)
 
-        # Dummy low-resolution image (batch size 1)
-        # This would be the input for conditioning the generation of the residual
-        # Its size should match what the context_extractor or Unet expects for conditioning
-        dummy_low_res_image = torch.randn(1, img_c, lr_size, lr_size).to(generator.device)
+        dummy_low_res_image = torch.randn(1, img_c, lr_size, lr_size).to(current_device)
 
-        print(f"Generating residuals with dummy model. LR image shape: {dummy_low_res_image.shape}")
-        # Generate residuals. The `condition` for the Unet is derived from `dummy_low_res_image`.
+        print(f"Generating residuals with dummy model and dummy context extractor. LR image shape: {dummy_low_res_image.shape}")
+        
         generated_residuals_example = generator.generate_residuals(
             model=unet_example,
-            low_resolution_image=dummy_low_res_image, # This is the conditioning input
-            num_images=1, # Should match batch size of low_res_image
-            num_inference_steps=10 # Fewer steps for quick example
+            low_resolution_image=dummy_low_res_image,
+            context_extractor=context_extractor_example, # Pass the dummy context_extractor
+            num_images=1, 
+            num_inference_steps=10 
         )
-        print(f"Generated residuals shape: {generated_residuals_example.shape}") # Expected: [1, img_c, hr_size, hr_size]
+        print(f"Generated residuals shape: {generated_residuals_example.shape}") 
         assert generated_residuals_example.shape == (1, img_c, hr_size, hr_size)
         print("ResidualGenerator example completed successfully.")
 
     except Exception as e:
-        print(f"Error in ResidualGenerator example: {e}") # Log error
+        import traceback
+        print(f"Error in ResidualGenerator example: {e}") 
+        traceback.print_exc()
+
+

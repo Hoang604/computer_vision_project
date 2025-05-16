@@ -47,7 +47,6 @@ class BasicRRDBNetTrainer:
         print(f"Scheduler Config: {self.scheduler_config}")
 
     def _build_model(self):
-        # Assuming RRDBNet constructor takes these specific keys from model_config
         model = RRDBNet(
             in_channels=self.model_config.get('in_nc', 3), 
             out_channels=self.model_config.get('out_nc', 3), 
@@ -63,7 +62,11 @@ class BasicRRDBNetTrainer:
         beta1 = self.optimizer_config.get('beta1', 0.9)
         beta2 = self.optimizer_config.get('beta2', 0.999)
         weight_decay = self.optimizer_config.get('weight_decay', 0.0)
-        optimizer = torch.optim.Adam(model_to_optimize.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        
+        optimizer = torch.optim.AdamW(model_to_optimize.parameters(), 
+                                      lr=lr, 
+                                      betas=(beta1, beta2), 
+                                      weight_decay=weight_decay)
         return optimizer
 
     def _build_scheduler(self, optimizer_to_schedule):
@@ -139,13 +142,17 @@ class BasicRRDBNetTrainer:
         print(f"Basic RRDBNet (Standalone) - Saving checkpoints to: {self.checkpoint_dir}")
         print(f"Basic RRDBNet (Standalone) - Best model will be saved to: {self.best_checkpoint_path}")
 
-    def _perform_one_train_step(self, batch_data):
-        img_lr, _, img_hr, _ = batch_data 
-        img_lr = img_lr.to(self.device)
+    def _perform_one_train_step(self, batch_data, predict_residual=False):
+        img_lr, _, img_hr, img_res = batch_data 
         img_hr = img_hr.to(self.device)
-
-        predicted_hr = self.model(img_lr) 
-        loss = F.l1_loss(predicted_hr, img_hr) 
+        if predict_residual:
+            img_res = img_res.to(self.device)
+            predicted_res = self.model(img_lr)
+            loss = F.l1_loss(predicted_res, img_res)
+        else:
+            img_lr = img_lr.to(self.device)
+            predicted_hr = self.model(img_lr) 
+            loss = F.l1_loss(predicted_hr, img_hr) 
         return loss
 
     def train(self, 
@@ -155,7 +162,8 @@ class BasicRRDBNetTrainer:
               log_dir_param: str = None, 
               checkpoint_dir_param: str = None, 
               resume_checkpoint_path: str = None,
-              save_every_n_epochs: int = 5
+              save_every_n_epochs: int = 5,
+              predict_residual: bool = False
              ):
         
         self._setup_logging_and_checkpointing(log_dir_param, checkpoint_dir_param)
@@ -181,7 +189,7 @@ class BasicRRDBNetTrainer:
             num_batches_in_epoch = 0
 
             for batch_idx, batch_data in enumerate(train_loader):
-                loss = self._perform_one_train_step(batch_data)
+                loss = self._perform_one_train_step(batch_data, predict_residual=predict_residual)
                 scaled_loss = loss / accumulation_steps
                 scaled_loss.backward()
                 
@@ -354,7 +362,7 @@ class BasicRRDBNetTrainer:
         in_nc_val = model_config.get('in_nc', 3)
         out_nc_val = model_config.get('out_nc', 3)
         nf = model_config.get('num_feat', 64) 
-        nb = model_config.get('num_block', 17) 
+        nb = model_config.get('num_block', 8) 
         gc_val = model_config.get('gc', 32)
         sr_scale_val = model_config.get('sr_scale', 4)
 

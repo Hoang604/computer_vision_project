@@ -3,8 +3,9 @@ from torch.utils.data import DataLoader
 from utils.dataset import ImageDataset
 import os
 import argparse
-from diffusion_modules import Unet, RRDBNet # Assuming RRDBNet is correctly imported/defined elsewhere
+from diffusion_modules import Unet
 from diffusion_trainer import DiffusionTrainer
+from rrdb_trainer import BasicRRDBNetTrainer 
 
 def train_diffusion(args):
     """
@@ -123,33 +124,19 @@ def train_diffusion(args):
     # --- Initialize the context_extractor RRDBNet ---
     # Ensure RRDBNet is defined or imported correctly
     # This part assumes RRDBNet is used as a context extractor as in the original script
-    context_extractor_model = RRDBNet(
-        in_channels=args.img_channels, # Number of input channels
-        out_channels=args.img_channels, # Number of output channels
-        rrdb_in_channels=args.rrdb_in_channels, # Number of features in RRDB
-        number_of_rrdb_blocks=args.number_of_rrdb_blocks, # Number of RRDB blocks
-        sr_scale=args.downscale_factor # sr_scale for RRDBNet, typically matches downscale_factor
-    ).to(device)
-    # Load pre-trained weights for context_extractor if provided
-    if args.rrdb_weights_path and os.path.exists(args.rrdb_weights_path):
-        try:
-            # Assuming a simple state_dict load for RRDBNet for now
-            # You might need a more sophisticated loading function similar to DiffusionTrainer.load_model_weights
-            # or the one in BasicRRDBNetTrainer.load_model_for_evaluation
-            rrdb_checkpoint = torch.load(args.rrdb_weights_path, map_location=device)
-            if 'model_state_dict' in rrdb_checkpoint: # Common pattern for checkpoints
-                context_extractor_model.load_state_dict(rrdb_checkpoint['model_state_dict'])
-            elif 'state_dict' in rrdb_checkpoint and 'model' in rrdb_checkpoint['state_dict']: # Another common pattern
-                 context_extractor_model.load_state_dict(rrdb_checkpoint['state_dict']['model'])
-            else: # Assume it's a raw state_dict
-                context_extractor_model.load_state_dict(rrdb_checkpoint)
-            print(f"Loaded pre-trained weights for RRDBNet context extractor from: {args.rrdb_weights_path}") # Log RRDB weights loading
-        except Exception as e:
-            print(f"Error loading RRDBNet weights from {args.rrdb_weights_path}: {e}. Using randomly initialized RRDBNet.") # Log error
-    else:
-        print("No pre-trained RRDBNet weights path specified or found. Using randomly initialized RRDBNet for context extraction.") # Log random init
-
-    context_extractor_model.eval() # Set context extractor to evaluation mode
+    model_config = {
+        'in_nc': args.img_channels, # Number of input channels
+        'out_nc': args.img_channels, # Number of output channels
+        'num_feat': args.rrdb_num_feat, # Number of features in RRDBNet
+        'num_block': args.number_of_rrdb_blocks, # Number of RRDB blocks
+        'gc': args.rrdb_gc, # Growth channel in RRDBNet
+        'sr_scale': args.downscale_factor # Downscale factor for LR images
+    }
+    try:
+        context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(model_path=args.rrdb_weights_path, model_config=model_config, device=device) # Load RRDBNet model for context extraction
+    except Exception as e:
+        print(f"Error initializing RRDBNet context extractor: {e}")
+        raise
 
     # --- Start Training ---
     print("\nStarting diffusion model training process...") # Log start of training
@@ -217,10 +204,11 @@ if __name__ == "__main__":
 
 
     # RRDBNet (Context Extractor) args
-    parser.add_argument('--rrdb_in_channels', type=int, default=64, help='Number of input features for RRDBNet trunk (nf)')
     parser.add_argument('--number_of_rrdb_blocks', type=int, default=8, help='Number of RRDB blocks in RRDBNet trunk (nb)')
     parser.add_argument('--rrdb_weights_path', type=str, default=None, help='Path to pre-trained RRDBNet weights (optional)')
-
+    parser.add_argument('--rrdb_num_feat', type=int, default=64, help='Number of features (nf) in RRDBNet')
+    parser.add_argument('--rrdb_gc', type=int, default=32, help='Growth channel (gc) in RRDBNet')
+    
 
     # Logging/Saving args
     parser.add_argument('--weights_path', type=str, default=None, help='Path to pre-trained UNet model weights to resume training')
@@ -262,7 +250,7 @@ if __name__ == "__main__":
     print(f"UNet Base Dim: {args.unet_base_dim}") # Log UNet base dim
     print(f"UNet Dim Mults: {tuple(args.unet_dim_mults)}") # Log UNet dim mults
     print(f"UNet Use Attention: {args.use_attention}") # Log UNet attention
-    print(f"RRDBNet nf: {args.rrdb_in_channels}, nb: {args.number_of_rrdb_blocks}") # Log RRDBNet config
+    print(f"RRDBNet nf: {args.rrdb_num_feat}, nb: {args.number_of_rrdb_blocks}") # Log RRDBNet config
     if args.rrdb_weights_path:
         print(f"RRDBNet Weights Path: {args.rrdb_weights_path}") # Log RRDB weights path
     if args.weights_path:

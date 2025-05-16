@@ -114,15 +114,16 @@ if __name__ == "__main__":
     parser.add_argument('--rrdb_gc', type=int, default=32, help='Growth channel (gc) in RRDBNet')
     
     # Training args
-    parser.add_argument('--device', type=str, default='cuda:0', help='Device to train on (e.g., cuda:0, cpu)')
+    parser.add_argument('--device', type=str, default='cuda:1', help='Device to train on (e.g., cuda, cpu)')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
-    parser.add_argument('--accumulation_steps', type=int, default=1, help='Gradient accumulation steps')
-    parser.add_argument('--learning_rate', type=float, default=2e-4, help='Optimizer learning rate')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--accumulation_steps', type=int, default=4, help='Gradient accumulation steps')
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Optimizer learning rate')
     parser.add_argument('--adam_beta1', type=float, default=0.9, help='Adam optimizer beta1')
     parser.add_argument('--adam_beta2', type=float, default=0.999, help='Adam optimizer beta2')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='Optimizer weight decay')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader worker processes')
+    parser.add_argument('--predict_residual', action='store_true', help='Predict residual instead of full image')
 
     # Scheduler args
     parser.add_argument('--scheduler_type', type=str, default='CosineAnnealingLR', 

@@ -1,3 +1,14 @@
 data
 output
-__pycache__
+__pycache__/
+scp.py
+.env
+rrdb_logs/
+rrdb_checkpoints/
+diffusion_logs/
+diffusion_checkpoints/
+checkpoints_rrdb/
+logs_rrdb/
+result.png
+*.png
+*.pyc
