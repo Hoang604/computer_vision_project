@@ -1,6 +1,7 @@
 from rrdb_trainer import BasicRRDBNetTrainer
 from utils.dataset import ImageDataset
 import matplotlib.pyplot as plt
+import numpy as np
 from typing import List
 import torch
 
@@ -120,14 +121,15 @@ def plot_feature_map(list_of_tensors: List[torch.Tensor]):
 def main():
     predict_residual = False
     img_size = 160
-    config = {'in_nc': 3, 'out_nc': 3, 'num_feat': 64, 'num_block': 8, 'gc': 32, 'sr_scale': 4} 
-    # config = {'in_nc': 3, 'out_nc': 3, 'num_feat': 64, 'num_block': 17, 'gc': 32, 'sr_scale': 4}
-    model_path = 'checkpoints_rrdb/rrdb_model_best.pth'
-    # model_path = 'checkpoints_rrdb/rrdb_17_05_16/rrdb_model_best.pth'
+    # config = {'in_nc': 3, 'out_nc': 3, 'num_feat': 64, 'num_block': 8, 'gc': 32, 'sr_scale': 4} 
+    config = {'in_nc': 3, 'out_nc': 3, 'num_feat': 64, 'num_block': 17, 'gc': 32, 'sr_scale': 4}
+    # model_path = 'checkpoints_rrdb/rrdb_model_best.pth'
+    model_path = 'checkpoints_rrdb/rrdb_17_05_16/rrdb_model_best.pth'
     model = BasicRRDBNetTrainer.load_model_for_evaluation(model_path=model_path, model_config=config)
     dataset = ImageDataset(folder_path='data/', img_size=img_size, downscale_factor=4)
 
-    lr_img, up_img, hr_img, _ = dataset.__getitem__(0)
+    item = np.random.randint(0, len(dataset))
+    lr_img, up_img, hr_img, _ = dataset.__getitem__(item)
     lr_img = lr_img.unsqueeze(0).cuda()
     if predict_residual:
         res,feas = model(lr_img, get_fea=True)
@@ -136,7 +138,7 @@ def main():
         img_construct = img_construct.permute(1, 2, 0).detach().cpu().numpy()
     else:
         img_construct, feas = model(lr_img, get_fea=True)
-    plot_feature_map(feas[2::3])
+    # plot_feature_map(feas[2::3])
     print(f"img_construct shape: {img_construct.shape}")
     print(f"img_construct min: {img_construct.min()}")
     print(f"img_construct max: {img_construct.max()}")
@@ -171,6 +173,8 @@ def main():
     plt.title('Constructed Image')
     plt.imshow(img_construct)
     plt.axis('off')
+    # plt.savefig('test2.png')
     plt.show()
+
 if __name__ == '__main__':
     main()

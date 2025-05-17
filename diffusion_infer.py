@@ -2,13 +2,14 @@ from diffusion_trainer import DiffusionTrainer, ResidualGenerator
 from utils.dataset import ImageDataset
 import matplotlib.pyplot as plt
 from rrdb_trainer import BasicRRDBNetTrainer
-import torch
+import numpy as np
 from diffusion_modules import Unet
+import torch
 
 def plot_result(imgs):
     lr, up, hr, res, diff_res, con = imgs
 
-    fig, axs = plt.subplots(2, 3, figsize=(15, 10))
+    fig, axs = plt.subplots(2, 3, figsize=(9, 6))
     axs[0, 0].imshow(lr)
     axs[0, 0].set_title('LR Image')
     axs[0, 1].imshow(up)
@@ -35,14 +36,15 @@ def main():
     # Load the model
     img_size = 160
     config = {'in_nc': 3, 'out_nc': 3, 'num_feat': 64, 'num_block': 8, 'gc': 32, 'sr_scale': 4} 
-    context_extractor = BasicRRDBNetTrainer.load_model_for_evaluation(model_path='checkpoints_rrdb/rrdb_model_best.pth', model_config=config)
+    rrdb_model_path = 'checkpoints_rrdb/rrdb_model_best.pth'
+    context_extractor = BasicRRDBNetTrainer.load_model_for_evaluation(model_path=rrdb_model_path, model_config=config)
     
     # Load the dataset
     dataset = ImageDataset(folder_path='data/', img_size=img_size, downscale_factor=4)
 
     # Create a DataLoader
-    
-    lr_img, up_img, hr_img, residual = dataset.__getitem__(0)
+    item = np.random.randint(0, len(dataset))
+    lr_img, up_img, hr_img, residual = dataset.__getitem__(item)
     context = lr_img.unsqueeze(0).to('cuda')
     print(lr_img.shape)
 

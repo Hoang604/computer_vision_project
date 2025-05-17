@@ -7,7 +7,7 @@ rrdb_logs/
 rrdb_checkpoints/
 diffusion_logs/
 diffusion_checkpoints/
-checkpoints_rrdb/
+checkpoints_rrdb/rrdb_model_best.pth
 logs_rrdb/
 result.png
 *.png
