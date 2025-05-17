@@ -7,8 +7,9 @@ rrdb_logs/
 rrdb_checkpoints/
 diffusion_logs/
 diffusion_checkpoints/
-checkpoints_rrdb/rrdb_model_best.pth
+checkpoints_rrdb/
 logs_rrdb/
 result.png
 *.png
-*.pyc
+*.__pyc
+test.py
