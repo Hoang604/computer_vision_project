@@ -13,8 +13,8 @@ def train_diffusion(args):
     Uses a hardcoded path for the dataset image folder and the simplified Dataset class.
     """
 
-    context = args.context
-    assert context in ['LR', 'HR'], "Context must be either 'LR' or 'HR'." # Ensure context is valid
+    context_mode_for_trainer = args.context_type
+    assert context_mode_for_trainer in ['LR', 'HR'], "Context type must be either 'LR' or 'HR'." # Ensure context is valid
     # --- Setup Device ---
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         print(f"CUDA device {args.device} requested but CUDA not available. Using CPU.") # Warning message
@@ -27,10 +27,10 @@ def train_diffusion(args):
     print(f"Using device: {device}") # Log the device being used
 
     # --- Setup Dataset and DataLoader ---
-    # Create the dataset with the specified folder
-    folder_path = args.image_folder # Use image_folder from args
-    train_dataset = ImageDataset(folder_path=folder_path, img_size=args.img_size, downscale_factor=args.downscale_factor)
-    print(f"Loaded {len(train_dataset)} images from {folder_path}") # Log dataset size and path
+    train_dataset = ImageDataset(folder_path=args.image_folder, 
+                                 img_size=args.img_size, 
+                                 downscale_factor=args.downscale_factor)
+    print(f"Loaded {len(train_dataset)} images from {args.image_folder}") # Log dataset size and path
 
     # Create the DataLoader
     train_loader = DataLoader(
@@ -52,13 +52,14 @@ def train_diffusion(args):
     # --- Initialize UNet Model ---
     unet_model = Unet(
         base_dim=args.unet_base_dim,
-        dim_mults=tuple(args.unet_dim_mults), # Ensure dim_mults is a tuple
-        use_attention=args.use_attention # Pass use_attention argument
+        dim_mults=tuple(args.unet_dim_mults),
+        use_attention=args.use_attention,
+        cond_dim=args.rrdb_num_feat,
+        rrdb_num_blocks=args.number_of_rrdb_blocks
     ).to(device)
     print(f"UNet model initialized with base_dim={args.unet_base_dim}, dim_mults={tuple(args.unet_dim_mults)}, use_attention={args.use_attention}") # Log UNet config
 
     # --- Initialize Optimizer ---
-    # Use standard AdamW optimizer
     optimizer = torch.optim.AdamW(
         unet_model.parameters(),
         lr=args.learning_rate,
@@ -68,61 +69,52 @@ def train_diffusion(args):
 
     # --- Initialize Scheduler ---
     scheduler = None
-    if args.scheduler_type != "none":
-        if args.scheduler_type == "steplr":
+    if args.scheduler_type.lower() != "none":
+        if args.scheduler_type.lower() == "steplr":
             scheduler = torch.optim.lr_scheduler.StepLR(
                 optimizer,
-                step_size=args.lr_decay_epochs,
+                step_size=args.lr_decay_epochs, # Note: StepLR steps per epoch here
                 gamma=args.lr_gamma
             )
-            print(f"Using StepLR scheduler with step_size={args.lr_decay_epochs}, gamma={args.lr_gamma}") # Log StepLR config
-        elif args.scheduler_type == "cosineannealinglr":
+            print(f"Using StepLR scheduler with step_size_epochs={args.lr_decay_epochs}, gamma={args.lr_gamma}") # Log StepLR config
+        elif args.scheduler_type.lower() == "cosineannealinglr":
+            # T_max is typically total number of epochs for CosineAnnealingLR
+            t_max_epochs_for_scheduler = args.cosine_t_max_epochs if args.cosine_t_max_epochs is not None else args.epochs
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=args.t_max_epochs,
+                T_max=t_max_epochs_for_scheduler,
                 eta_min=args.eta_min_lr
             )
-            print(f"Using CosineAnnealingLR scheduler with T_max={args.t_max_epochs}, eta_min={args.eta_min_lr}") # Log CosineAnnealingLR config
-        elif args.scheduler_type == "exponentiallr":
+            print(f"Using CosineAnnealingLR scheduler with T_max_epochs={t_max_epochs_for_scheduler}, eta_min={args.eta_min_lr}") # Log CosineAnnealingLR config
+        elif args.scheduler_type.lower() == "exponentiallr":
             scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 optimizer,
-                gamma=args.lr_gamma # ExponentialLR uses gamma directly
+                gamma=args.lr_gamma
             )
             print(f"Using ExponentialLR scheduler with gamma={args.lr_gamma}") # Log ExponentialLR config
-        # Add other schedulers here as elif blocks
-        # Example:
-        # elif args.scheduler_type == "multisteplr":
-        #     scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        #         optimizer,
-        #         milestones=args.lr_milestones, # Assuming lr_milestones is a list of ints from args
-        #         gamma=args.lr_gamma
-        #     )
-        #     print(f"Using MultiStepLR scheduler with milestones={args.lr_milestones}, gamma={args.lr_gamma}")
         else:
             print(f"Warning: Unknown scheduler type '{args.scheduler_type}'. No scheduler will be used.") # Warning for unknown scheduler
-            args.scheduler_type = "none"
+            args.scheduler_type = "none" 
 
     # --- Load Checkpoint if available ---
     start_epoch = 0
     best_loss = float('inf')
-    # Path to pre-trained model weights, can be None
-    weights_path = args.weights_path if args.weights_path and os.path.exists(args.weights_path) else None
-    if weights_path:
-        print(f"Attempting to load checkpoint from: {weights_path}") # Log checkpoint loading attempt
-        # Pass scheduler for loading its state if available in checkpoint
-        start_epoch, best_loss = diffusion_trainer.load_checkpoint_for_resume(
-            device=device, # Pass device
+    weights_path_unet = args.weights_path_unet if args.weights_path_unet and os.path.exists(args.weights_path_unet) else None
+    if weights_path_unet:
+        print(f"Attempting to load UNet checkpoint from: {weights_path_unet}") # Log checkpoint loading attempt
+        start_epoch, best_loss = DiffusionTrainer.load_checkpoint_for_resume(
+            device=device,
             model=unet_model,
             optimizer=optimizer,
-            scheduler=scheduler if args.scheduler_type != "none" else None, # Pass scheduler
-            checkpoint_path=weights_path
+            scheduler=scheduler if args.scheduler_type.lower() != "none" else None,
+            checkpoint_path=weights_path_unet,
+            verbose_load=args.verbose_load
         )
-        print(f"Loaded checkpoint. Resuming from epoch {start_epoch}, best loss: {best_loss:.4f}") # Log resume info
+        print(f"Loaded UNet checkpoint. Resuming from epoch {start_epoch}, best loss: {best_loss:.6f}") # Log resume info
     else:
-        print("No valid pre-trained weights path found or specified. Starting training from scratch.") # Log starting from scratch
+        print("No valid pre-trained UNet weights path found or specified. Starting UNet training from scratch.") # Log starting from scratch
 
     # --- Initialize the context_extractor RRDBNet ---
-    # Ensure RRDBNet is defined or imported correctly
     # This part assumes RRDBNet is used as a context extractor as in the original script
     model_config = {
         'in_nc': args.img_channels, # Number of input channels
@@ -133,9 +125,13 @@ def train_diffusion(args):
         'sr_scale': args.downscale_factor # Downscale factor for LR images
     }
     try:
-        context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(model_path=args.rrdb_weights_path, model_config=model_config, device=device) # Load RRDBNet model for context extraction
+        context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(
+            model_path=args.rrdb_weights_path, 
+            model_config=model_config, 
+            device=device)
     except Exception as e:
         print(f"Error initializing RRDBNet context extractor: {e}")
+        print("Ensure --rrdb_weights_path is set correctly and model config matches.")
         raise
 
     # --- Start Training ---
@@ -151,74 +147,105 @@ def train_diffusion(args):
             epochs=args.epochs,
             start_epoch=start_epoch,
             best_loss=best_loss,
-            context_selection_mode=context, # Pass context selection mode
+            context_selection_mode=context_mode_for_trainer,
             log_dir_param=args.continue_log_dir if args.continue_log_dir else None,
             checkpoint_dir_param=args.continue_checkpoint_dir if args.continue_checkpoint_dir else None,
             log_dir_base=args.base_log_dir,
             checkpoint_dir_base=args.base_checkpoint_dir
         )
     except Exception as train_error:
-        # Catch potential errors during training
         print(f"\nERROR occurred during training: {train_error}") # Log training error
-        print("This might be due to issues reading image files, CUDA memory, or shape mismatches.") # Helpful message
-        raise # Re-raise the exception for debugging
+        import traceback
+        traceback.print_exc()
+        print("This might be due to issues like CUDA memory, shape mismatches, or data loading.") # Helpful message
+        raise
 
 # --- Script Entry Point ---
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Train Diffusion Model with LR Scheduler Support")
     # Dataset args
-    parser.add_argument('--img_size', type=int, default=160, help='Target image size for HR')
-    parser.add_argument('--img_channels', type=int, default=3, help='Number of image channels')
-    parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/images160x160", help='Path to the image folder (HR images)')
-    parser.add_argument('--downscale_factor', type=int, default=4, help='Downscale factor for LR images, also SR scale for RRDBNet')
+    parser.add_argument('--image_folder', type=str, 
+                        default="/media/tuannl1/heavy_weight/data/cv_data/images160x160", 
+                        help='Path to the image folder (HR images)')
+    parser.add_argument('--img_size', type=int, default=160, 
+                        help='Target image size for HR')
+    parser.add_argument('--img_channels', type=int, default=3, 
+                        help='Number of image channels')
+    parser.add_argument('--downscale_factor', type=int, default=4, 
+                        help='Downscale factor for LR images, also SR scale for RRDBNet')
 
     # Training args
-    parser.add_argument('--device', type=str, default='cuda:0', help='Device to train on (e.g., cuda:0, cuda:1, cpu)')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs') # Increased default
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size per device') # Adjusted default
-    parser.add_argument('--accumulation_steps', type=int, default=4, help='Gradient accumulation steps (effective_batch_size = batch_size * accumulation_steps)') # Adjusted default
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Initial optimizer learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-2, help='Optimizer weight decay')
-    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader worker processes')
+    parser.add_argument('--device', type=str, default='cuda:0', 
+                        help='Device to train on (e.g., cuda:0, cuda:1, cpu)')
+    parser.add_argument('--epochs', type=int, default=60, 
+                        help='Number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=32, 
+                        help='Batch size per device')
+    parser.add_argument('--accumulation_steps', type=int, default=4, 
+                        help='Gradient accumulation steps (effective_batch_size = batch_size * accumulation_steps)') # Adjusted default
+    parser.add_argument('--learning_rate', type=float, default=1e-4, 
+                        help='Initial optimizer learning rate')
+    parser.add_argument('--weight_decay', type=float, default=1e-2, 
+                        help='Optimizer weight decay')
+    parser.add_argument('--num_workers', type=int, default=4,
+                         help='DataLoader worker processes')
 
     # Scheduler args
-    parser.add_argument('--scheduler_type', type=str, default='cosineannealinglr', choices=['none', 'steplr', 'cosineannealinglr', 'exponentiallr'], help='Type of LR scheduler')
-    parser.add_argument('--lr_decay_epochs', type=int, default=30, help='StepLR: decay LR every N epochs') # For StepLR
-    parser.add_argument('--lr_gamma', type=float, default=0.1, help='StepLR/ExponentialLR: LR decay factor') # For StepLR, ExponentialLR
-    parser.add_argument('--t_max_epochs', type=int, default=100, help='CosineAnnealingLR: T_max in epochs') # For CosineAnnealingLR (usually total epochs)
-    parser.add_argument('--eta_min_lr', type=float, default=1e-6, help='CosineAnnealingLR: minimum learning rate') # For CosineAnnealingLR
-    # Example for MultiStepLR if you add it:
-    # parser.add_argument('--lr_milestones', type=int, nargs='+', default=[50, 80], help='MultiStepLR: epoch milestones for LR decay')
+    parser.add_argument('--scheduler_type', type=str, default='cosineannealinglr', 
+                        choices=['none', 'steplr', 'cosineannealinglr', 'exponentiallr'], 
+                        help='Type of LR scheduler')
+    parser.add_argument('--lr_decay_epochs', type=int, default=30, 
+                        help='StepLR: decay LR every N epochs')
+    parser.add_argument('--lr_gamma', type=float, default=0.1, 
+                        help='StepLR/ExponentialLR: LR decay factor')
+    parser.add_argument('--cosine_t_max_epochs', type=int, default=None, 
+                        help='CosineAnnealingLR: T_max in epochs')
+    parser.add_argument('--eta_min_lr', type=float, default=1e-6, 
+                        help='CosineAnnealingLR: minimum learning rate') # For CosineAnnealingLR
 
 
     # Diffusion args
-    parser.add_argument('--context', type=str, default='LR', choices=['LR', 'HR'], help='Context type for conditioning (LR or HR image features)')
-    parser.add_argument('--timesteps', type=int, default=1000, help='Number of diffusion timesteps')
-    parser.add_argument('--diffusion_mode', type=str, default='v_prediction', choices=['v_prediction', 'noise'], help='Diffusion model prediction mode')
+    parser.add_argument('--context_type', type=str, default='LR', choices=['LR', 'HR'], 
+                        help='Context type for conditioning (LR or HR image features)')
+    parser.add_argument('--timesteps', type=int, default=1000, 
+                        help='Number of diffusion timesteps')
+    parser.add_argument('--diffusion_mode', type=str, default='noise', choices=['v_prediction', 'noise'],
+                        help='Diffusion model prediction mode')
 
     # UNet args
-    parser.add_argument('--unet_base_dim', type=int, default=64, help='Base channel dimension for UNet')
-    parser.add_argument('--unet_dim_mults', type=int, nargs='+', default=[1, 2, 4, 8], help='Channel multipliers for UNet down/up blocks')
-    parser.add_argument('--use_attention', action='store_true', help='Whether to use attention in the UNet mid block')
+    parser.add_argument('--unet_base_dim', type=int, default=64, 
+                        help='Base channel dimension for UNet')
+    parser.add_argument('--unet_dim_mults', type=int, nargs='+', default=[1, 2, 4, 8], 
+                        help='Channel multipliers for UNet down/up blocks')
+    parser.add_argument('--use_attention', action='store_true', 
+                        help='Whether to use attention in the UNet mid block')
 
 
     # RRDBNet (Context Extractor) args
-    parser.add_argument('--number_of_rrdb_blocks', type=int, default=8, help='Number of RRDB blocks in RRDBNet trunk (nb)')
-    parser.add_argument('--rrdb_weights_path', type=str, default=None, help='Path to pre-trained RRDBNet weights (optional)')
-    parser.add_argument('--rrdb_num_feat', type=int, default=64, help='Number of features (nf) in RRDBNet')
-    parser.add_argument('--rrdb_gc', type=int, default=32, help='Growth channel (gc) in RRDBNet')
+    parser.add_argument('--rrdb_weights_path', type=str, default=None, 
+                        help='Path to pre-trained RRDBNet weights (optional)')
+    parser.add_argument('--number_of_rrdb_blocks', type=int, default=8, 
+                        help='Number of RRDB blocks in RRDBNet trunk (nb)')
+    parser.add_argument('--rrdb_num_feat', type=int, default=64, 
+                        help='Number of features (nf) in RRDBNet')
+    parser.add_argument('--rrdb_gc', type=int, default=32, 
+                        help='Growth channel (gc) in RRDBNet')
     
 
     # Logging/Saving args
-    parser.add_argument('--weights_path', type=str, default=None, help='Path to pre-trained UNet model weights to resume training')
-    parser.add_argument('--base_log_dir', type=str, default='./cv_logs_diffusion', help='Base directory for TensorBoard logging')
-    parser.add_argument('--base_checkpoint_dir', type=str, default='./cv_checkpoints_diffusion', help='Base directory for saving model checkpoints')
-    parser.add_argument('--continue_log_dir', type=str, default=None, help='Specific log directory to continue (resumes experiment)')
-    parser.add_argument('--continue_checkpoint_dir', type=str, default=None, help='Specific checkpoint directory to continue (resumes experiment)')
-
-    # Loading model args (verbose for checkpoint loading)
-    parser.add_argument('--verbose_load', action='store_true', help='Print detailed information about weight loading from checkpoint')
+    parser.add_argument('--weights_path_unet', type=str, default=None, 
+                        help='Path to pre-trained UNet model weights to resume training')
+    parser.add_argument('--base_log_dir', type=str, default='./cv_logs_diffusion', 
+                        help='Base directory for TensorBoard logging')
+    parser.add_argument('--base_checkpoint_dir', type=str, default='./cv_checkpoints_diffusion', 
+                        help='Base directory for saving model checkpoints')
+    parser.add_argument('--continue_log_dir', type=str, default=None, 
+                        help='Specific log directory to continue (resumes experiment)')
+    parser.add_argument('--continue_checkpoint_dir', type=str, default=None, 
+                        help='Specific checkpoint directory to continue (resumes experiment)')
+    parser.add_argument('--verbose_load', action='store_true', 
+                        help='Print detailed information about weight loading from checkpoint')
 
     args = parser.parse_args()
 
@@ -240,11 +267,11 @@ if __name__ == "__main__":
     if args.scheduler_type == "steplr":
         print(f"  StepLR: Decay Epochs: {args.lr_decay_epochs}, Gamma: {args.lr_gamma}") # Log StepLR params
     elif args.scheduler_type == "cosineannealinglr":
-        print(f"  CosineAnnealingLR: T_max Epochs: {args.t_max_epochs}, Eta_min LR: {args.eta_min_lr}") # Log CosineAnnealingLR params
+        print(f"  CosineAnnealingLR: T_max Epochs: {args.cosine_t_max_epochs}, Eta_min LR: {args.eta_min_lr}") # Log CosineAnnealingLR params
     elif args.scheduler_type == "exponentiallr":
         print(f"  ExponentialLR: Gamma: {args.lr_gamma}") # Log ExponentialLR params
     print(f"Num Workers: {args.num_workers}") # Log num workers
-    print(f"Context Type: {args.context}") # Log context type
+    print(f"Context Type: {args.context_type}") # Log context type
     print(f"Diffusion Timesteps: {args.timesteps}") # Log timesteps
     print(f"Diffusion Mode: {args.diffusion_mode}") # Log diffusion mode
     print(f"UNet Base Dim: {args.unet_base_dim}") # Log UNet base dim
@@ -254,7 +281,7 @@ if __name__ == "__main__":
     if args.rrdb_weights_path:
         print(f"RRDBNet Weights Path: {args.rrdb_weights_path}") # Log RRDB weights path
     if args.weights_path:
-        print(f"UNet Weights Path (for resume): {args.weights_path}") # Log UNet weights path
+        print(f"UNet Weights Path (for resume): {args.weights_path_unet}") # Log UNet weights path
     print(f"Base Log Dir: {args.base_log_dir}") # Log base log dir
     print(f"Base Checkpoint Dir: {args.base_checkpoint_dir}") # Log base checkpoint dir
     if args.continue_log_dir:

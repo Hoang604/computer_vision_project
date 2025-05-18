@@ -13,3 +13,4 @@ result.png
 *.png
 *.__pyc
 test.py
+processed_data

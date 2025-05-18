@@ -223,93 +223,128 @@ class DiffusionTrainer:
             raise ValueError(f"Unsupported training mode: {self.mode}") # Should not happen if validated in __init__
         return target
 
-    def _perform_batch_step(self, model, context_extractor, batch_data, context_selection_mode, optimizer,
-                            accumulation_steps, current_accumulation_idx, global_step_optimizer):
-        """Process a training batch: forward pass, loss calculation, backward pass, and optimizer step (if enough accumulation)."""
-        # Unpack batch data - assuming (low_res, upscaled_bicubic, original_hr, original_residual)
-        low_res_image_batch, _, _, residual_image_batch = batch_data
+    def _perform_batch_step(self, model, context_extractor, batch_data, optimizer,
+                            accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True):
+        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual)
+        low_res_image_batch, _, _, residual_image_batch = batch_data 
 
-        low_res_image_batch = low_res_image_batch.to(self.device) # Move LR images to device
-        # Extract condition features using the context_extractor (e.g., RRDBNet)
-        # The context_selection_mode might determine if LR or HR (or other) is used by context_extractor
-        # For now, assuming context_extractor always takes low_res_image_batch
-        with torch.no_grad(): # Context extraction should not be part of gradient computation for the diffusion model
-            _, condition_features_list = context_extractor(low_res_image_batch, get_fea=True) # get_fea=True if RRDBNet returns features
+        low_res_image_batch = low_res_image_batch.to(self.device)
+        residual_image_batch = residual_image_batch.to(self.device)
 
-        residual_image_batch = residual_image_batch.to(self.device) # Move target residual images to device
+        with torch.set_grad_enabled(is_training): 
+            with torch.no_grad():
+                _, condition_features_list = context_extractor(low_res_image_batch, get_fea=True)
 
-        actual_batch_size = residual_image_batch.shape[0] # Get actual batch size (can be smaller for last batch)
-        # Sample random timesteps t for each image in the batch
-        t = torch.randint(0, self.timesteps, (actual_batch_size,), device=self.device, dtype=torch.long)
-        # Perform forward diffusion (q_sample) to get noisy image x_t and the added noise
-        residual_image_batch_t, noise_added = self.q_sample(residual_image_batch, t)
+            actual_batch_size = residual_image_batch.shape[0]
+            t = torch.randint(0, self.timesteps, (actual_batch_size,), device=self.device, dtype=torch.long)
+            residual_image_batch_t, noise_added = self.q_sample(residual_image_batch, t)
+            target = self._get_training_target(noise_added, residual_image_batch, t)
+            
+            predicted_output = model(residual_image_batch_t, t, condition=condition_features_list)
+            loss = F.mse_loss(predicted_output, target)
 
-        # Determine the target for the model based on the prediction mode
-        target = self._get_training_target(noise_added, residual_image_batch, t)
-
-        # Get model prediction (e.g., U-Net predicts noise or v)
-        # The model (U-Net) takes the noisy image x_t, timestep t, and condition features
-        predicted_output = model(residual_image_batch_t, t, condition=condition_features_list) # Pass condition_features_list as context
-        loss = F.mse_loss(predicted_output, target) # Calculate Mean Squared Error loss
-        scaled_loss = loss / accumulation_steps # Scale loss for gradient accumulation
-        scaled_loss.backward() # Perform backward pass
-
-        current_accumulation_idx += 1 # Increment accumulation counter
-        updated_optimizer_this_step = False # Flag to check if optimizer was updated
-        if current_accumulation_idx >= accumulation_steps:
-            # Optional: Gradient clipping can be added here if needed
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step() # Update model parameters
-            optimizer.zero_grad() # Reset gradients
-            current_accumulation_idx = 0 # Reset accumulation counter
-            global_step_optimizer +=1 # Increment global optimizer step counter
-            updated_optimizer_this_step = True # Mark optimizer as updated
-
+        updated_optimizer_this_step = False
+        if is_training:
+            scaled_loss = loss / accumulation_steps
+            scaled_loss.backward()
+            current_accumulation_idx += 1
+            if current_accumulation_idx >= accumulation_steps:
+                optimizer.step()
+                optimizer.zero_grad()
+                current_accumulation_idx = 0
+                global_step_optimizer +=1
+                updated_optimizer_this_step = True
+        
         return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step
 
-    def _log_and_checkpoint_epoch_end(self, epoch, model, optimizer, scheduler, epoch_losses, current_best_loss,
-                                        global_step_optimizer, best_checkpoint_path, writer, dataset, context_extractor): # Added context_extractor
-        """Handle end-of-epoch tasks: log loss, save checkpoint, step scheduler, generate sample images."""
-        mean_loss = np.mean(epoch_losses) if epoch_losses else float('nan') # Calculate mean loss for the epoch
-        print(f"Epoch {epoch+1} Average Loss ({self.mode}): {mean_loss:.4f}") # Log epoch average loss
-        writer.add_scalar(f'Loss_{self.mode}/epoch_avg', mean_loss, epoch + 1) # Log to TensorBoard
+    def _run_validation_epoch(self, model, context_extractor, val_loader, writer, epoch):
+        """
+        Runs a validation epoch.
+        """
+        model.eval() # Set model to evaluation mode
+        context_extractor.eval() # Set context extractor to evaluation mode
+        
+        total_val_loss = 0.0
+        num_val_batches = 0
+        
+        print(f"\nRunning validation for epoch {epoch+1}...") # write message on console
+        progress_bar_val = tqdm(total=len(val_loader), desc=f"Validation Epoch {epoch+1}")
 
-        # Log learning rate
+        with torch.no_grad(): # Ensure no gradients are computed during validation
+            for batch_idx, batch_data in enumerate(val_loader):
+                # Pass dummy optimizer, accumulation_steps, etc., as they are not used in eval mode
+                # is_training is set to False
+                loss_value, _, _, _ = self._perform_batch_step(
+                    model, context_extractor, batch_data, 
+                    optimizer=None, accumulation_steps=1, current_accumulation_idx=0, global_step_optimizer=0,
+                    is_training=False 
+                )
+                total_val_loss += loss_value
+                num_val_batches += 1
+                progress_bar_val.update(1)
+                progress_bar_val.set_postfix(val_loss_batch=f"{loss_value:.4f}")
+        
+        progress_bar_val.close()
+        avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else float('nan')
+        print(f"Epoch {epoch+1} Average Validation Loss ({self.mode}): {avg_val_loss:.4f}") # write message on console
+        
+        if writer:
+            writer.add_scalar(f'Loss_{self.mode}/validation_epoch_avg', avg_val_loss, epoch + 1)
+            
+        return avg_val_loss
+
+    def _log_and_checkpoint_epoch_end(self, epoch, model, optimizer, scheduler, train_epoch_losses,
+                                        current_best_val_loss, 
+                                        val_loss_this_epoch,   
+                                        global_step_optimizer, best_checkpoint_path, writer,
+                                        dataset_for_samples, context_extractor): # Removed save_every_n_epochs
+        """Handle end-of-epoch tasks: log loss, save checkpoint, step scheduler, generate sample images."""
+        mean_train_loss = np.mean(train_epoch_losses) if train_epoch_losses else float('nan')
+        print(f"Epoch {epoch+1} Average Training Loss ({self.mode}): {mean_train_loss:.4f}") # write message on console
+        writer.add_scalar(f'Loss_{self.mode}/train_epoch_avg', mean_train_loss, epoch + 1)
+
         if optimizer.param_groups:
             current_lr = optimizer.param_groups[0]['lr']
-            writer.add_scalar(f'LearningRate/epoch', current_lr, epoch + 1) # Log LR to TensorBoard
-            print(f"Current Learning Rate: {current_lr:.2e}") # Log current LR
+            writer.add_scalar(f'LearningRate/epoch', current_lr, epoch + 1)
+            print(f"Current Learning Rate at end of epoch {epoch+1}: {current_lr:.2e}") # write message on console
 
-        new_best_loss = current_best_loss
-        if mean_loss < current_best_loss:
-            new_best_loss = mean_loss
+        new_best_val_loss = current_best_val_loss
+        # saved_best_this_epoch = False # Not strictly needed anymore if we only save best
+        if val_loss_this_epoch is not None and val_loss_this_epoch < current_best_val_loss:
+            new_best_val_loss = val_loss_this_epoch
             checkpoint_data = {
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': new_best_loss,
-                'global_optimizer_steps': global_step_optimizer, # Save global optimizer steps
-                'mode': self.mode # Save training mode
+                'loss': new_best_val_loss, # Store best val loss
+                'train_loss_epoch': mean_train_loss, 
+                'global_optimizer_steps': global_step_optimizer,
+                'mode': self.mode
             }
-            if scheduler: # Save scheduler state if it exists
+            if scheduler:
                 checkpoint_data['scheduler_state_dict'] = scheduler.state_dict()
-            torch.save(checkpoint_data, best_checkpoint_path) # Save checkpoint
-            print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Mode: {self.mode}, OptSteps: {global_step_optimizer})") # Log checkpoint save
+            
+            torch.save(checkpoint_data, best_checkpoint_path)
+            print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Val Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})") # write message on console
+            # saved_best_this_epoch = True
 
-        # Step the scheduler (typically after an epoch)
         if scheduler:
-            # Some schedulers like ReduceLROnPlateau need the metric (e.g., validation loss)
-            # For simplicity, assuming epoch-based schedulers here.
-            # If using ReduceLROnPlateau, you'd do: scheduler.step(mean_loss_on_validation_set)
-            scheduler.step()
-            print(f"Scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") # Log scheduler step
-
-        if (epoch + 1) % 5 == 0: # Generate sample images every 5 epochs (configurable)
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                if val_loss_this_epoch is not None:
+                    scheduler.step(val_loss_this_epoch) 
+                    print(f"ReduceLROnPlateau scheduler stepped with val_loss {val_loss_this_epoch:.4f}.") # write message on console
+                else:
+                    print("ReduceLROnPlateau scheduler not stepped as validation was not run this epoch.") # write message on console
+            else:
+                scheduler.step() 
+                print(f"Epoch-based scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") # write message on console
+        
+        if (epoch + 1) % 5 == 0 and dataset_for_samples is not None: # Generate samples every 5 epochs
             try:
-                self._generate_and_log_samples(model, dataset, epoch, writer, context_extractor) # Pass context_extractor
-            except Exception as e:
-                pass
-        return new_best_loss
+                self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor)
+            except Exception as e_sample:
+                print(f"Error during sample generation: {e_sample}") # write message on console
+        return new_best_val_loss
 
     def _generate_and_log_samples(self, model, dataset, epoch, writer, context_extractor): # Added context_extractor
         """Generate sample images and log to TensorBoard."""
@@ -392,84 +427,94 @@ class DiffusionTrainer:
 
 
     def train(self,
-                dataset: DataLoader, # Type hint for dataset
-                model: torch.nn.Module, # Type hint for model
-                context_extractor:torch.nn.Module, # Type hint for context_extractor
-                optimizer, # Optimizer instance
-                scheduler=None, # Optional: Learning rate scheduler
-                accumulation_steps=1, # Gradient accumulation steps
-                epochs=100, # Total number of epochs
-                start_epoch=0, # Starting epoch (for resuming)
-                best_loss=float('inf'), # Best loss recorded (for resuming)
-                context_selection_mode="LR", # Context selection mode (e.g., "LR", "HR")
-                log_dir_param=None, # Optional: Specific log directory for resuming
-                checkpoint_dir_param=None, # Optional: Specific checkpoint directory for resuming
-                log_dir_base="/media/hoangdv/cv_logs_diffusion", # Base directory for logs
-                checkpoint_dir_base="/media/hoangdv/cv_checkpoints_diffusion" # Base directory for checkpoints
+                dataset: DataLoader, 
+                model: torch.nn.Module,
+                context_extractor:torch.nn.Module,
+                optimizer,
+                scheduler=None,
+                val_dataset: DataLoader = None, 
+                val_every_n_epochs: int = 1,   
+                accumulation_steps=1,
+                epochs=100,
+                start_epoch=0,
+                best_loss=float('inf'), 
+                context_selection_mode="LR", 
+                log_dir_param=None,
+                checkpoint_dir_param=None,
+                log_dir_base="/media/hoangdv/cv_logs_diffusion",
+                checkpoint_dir_base="/media/hoangdv/cv_checkpoints_diffusion"
              ) -> None:
 
-        model.to(self.device) # Move model to device
-        context_extractor.to(self.device) # Move context_extractor to device
-        context_extractor.eval() # Set context_extractor to evaluation mode
+        model.to(self.device)
+        context_extractor.to(self.device)
 
-        # Setup directories and TensorBoard writer
         writer, checkpoint_dir, log_dir, best_checkpoint_path = self._setup_training_directories_and_writer(
             log_dir_base, checkpoint_dir_base, log_dir_param, checkpoint_dir_param
         )
 
-        # Initialize step counters for training
         global_step_optimizer, batch_step_counter, current_accumulation_idx = self._initialize_training_steps(
-            start_epoch, len(dataset), accumulation_steps # Use len(dataset) which is num_batches if drop_last=True
+            start_epoch, len(dataset), accumulation_steps
         )
+        
+        current_best_val_loss = best_loss if start_epoch > 0 else float('inf')
 
-        print(f"Starting training in '{self.mode}' mode on device: {self.device} with {accumulation_steps} accumulation steps.") # Log training start
-        print(f"Logging to: {log_dir}") # Log logging directory
-        print(f"Saving checkpoints to: {checkpoint_dir}") # Log checkpoint directory
-        print(f"Initial global optimizer steps: {global_step_optimizer}, initial batch steps: {batch_step_counter}") # Log initial steps
+        print(f"Starting training in '{self.mode}' mode on device: {self.device} with {accumulation_steps} accumulation steps.") # write message on console
+        print(f"Logging to: {log_dir}") # write message on console
+        print(f"Saving best checkpoints to: {checkpoint_dir}") # write message on console (clarified)
+        if val_dataset:
+            print(f"Validation will be performed every {val_every_n_epochs} epoch(s).") # write message on console
+        print(f"Initial global optimizer steps: {global_step_optimizer}, initial batch steps: {batch_step_counter}") # write message on console
+        print(f"Initial best validation loss: {current_best_val_loss:.6f}") # write message on console
 
-        if start_epoch == 0: # Only zero_grad if not resuming an optimizer state that might have pending grads
-             optimizer.zero_grad() # Initialize gradients to zero
+        if start_epoch == 0:
+             optimizer.zero_grad()
 
         for epoch in range(start_epoch, epochs):
-            print(f"\nEpoch {epoch+1}/{epochs}") # Log current epoch
-            model.train() # Set model to training mode
-            progress_bar = tqdm(total=len(dataset), desc=f"Training ({self.mode}, Epoch {epoch+1})") # Initialize progress bar
-            epoch_losses = [] # List to store losses for this epoch
+            print(f"\nEpoch {epoch+1}/{epochs}") # write message on console
+            model.train() 
+            context_extractor.eval() 
 
-            for batch_idx, batch_data in enumerate(dataset): # Iterate over batches
+            progress_bar_train = tqdm(total=len(dataset), desc=f"Training ({self.mode}, Epoch {epoch+1})")
+            train_epoch_losses = []
+
+            for batch_idx, batch_data in enumerate(dataset):
                 loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer = self._perform_batch_step(
-                    model, context_extractor, batch_data, context_selection_mode, optimizer,
-                    accumulation_steps, current_accumulation_idx, global_step_optimizer
+                    model, context_extractor, batch_data, optimizer,
+                    accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True
                 )
 
-                epoch_losses.append(loss_value) # Append batch loss
-                writer.add_scalar(f'Loss_{self.mode}/batch_step_raw', loss_value, batch_step_counter) # Log raw batch loss
-                if updated_optimizer: # Log LR if optimizer was updated
-                    if optimizer.param_groups:
+                train_epoch_losses.append(loss_value)
+                writer.add_scalar(f'Loss_{self.mode}/train_batch_step_raw', loss_value, batch_step_counter)
+                if updated_optimizer and optimizer.param_groups:
                          writer.add_scalar(f'LearningRate/optimizer_step', optimizer.param_groups[0]['lr'], global_step_optimizer)
 
-
-                progress_bar.update(1) # Update progress bar
-                progress_bar.set_postfix(loss=f"{loss_value:.4f}", opt_steps=global_step_optimizer, lr=f"{optimizer.param_groups[0]['lr']:.2e}")
-                batch_step_counter += 1 # Increment batch step counter
-
-            # Handle end of epoch tasks
-            best_loss = self._log_and_checkpoint_epoch_end(
-                epoch, model, optimizer, scheduler, epoch_losses, best_loss, 
-                global_step_optimizer, best_checkpoint_path, writer, dataset, context_extractor # Pass context_extractor
+                progress_bar_train.update(1)
+                progress_bar_train.set_postfix(loss=f"{loss_value:.4f}", opt_steps=global_step_optimizer, lr=f"{optimizer.param_groups[0]['lr']:.2e}")
+                batch_step_counter += 1
+            
+            progress_bar_train.close()
+            
+            current_val_loss_this_epoch = None
+            if val_dataset and (epoch + 1) % val_every_n_epochs == 0:
+                current_val_loss_this_epoch = self._run_validation_epoch(model, context_extractor, val_dataset, writer, epoch)
+            
+            current_best_val_loss = self._log_and_checkpoint_epoch_end(
+                epoch, model, optimizer, scheduler, train_epoch_losses, 
+                current_best_val_loss, current_val_loss_this_epoch,
+                global_step_optimizer, best_checkpoint_path, writer, 
+                val_dataset if val_dataset else dataset, 
+                context_extractor
             )
-            progress_bar.close() # Close progress bar for the epoch
 
-        # After all epochs, process remaining gradients (if any) from the last partial accumulation
         if current_accumulation_idx > 0:
-            print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...") # Log final step
-            optimizer.step() # Perform final optimizer step
-            optimizer.zero_grad() # Zero gradients
-            global_step_optimizer +=1 # Increment global optimizer step counter
-            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}") # Log completion
+            print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...") # write message on console
+            optimizer.step()
+            optimizer.zero_grad()
+            global_step_optimizer +=1
+            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}") # write message on console
 
-        writer.close() # Close TensorBoard writer
-        print(f"Training finished for mode '{self.mode}'. Final best loss: {best_loss:.4f}") # Log training completion
+        writer.close()
+        print(f"Training finished for mode '{self.mode}'. Final best validation loss: {current_best_val_loss:.4f}") # write message on console
 
     @staticmethod
     def load_model_weights(device, model, model_path, verbose=False):

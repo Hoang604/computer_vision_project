@@ -151,10 +151,17 @@ def main():
 
     # Normalize the images to [0, 1] range for display
     lr_img = (lr_img + 1) / 2
+    print(f"lr_img min: {lr_img.min()}")
+    print(f"lr_img max: {lr_img.max()}")
     hr_img = (hr_img + 1) / 2
+    print(f"hr_img min: {hr_img.min()}")
+    print(f"hr_img max: {hr_img.max()}")
     img_construct = (img_construct + 1) / 2 
+    print(f"img_construct min: {img_construct.min()}")
+    print(f"img_construct max: {img_construct.max()}")
     up_img = (up_img + 1) / 2
-
+    print(f"up_img min: {up_img.min()}")
+    print(f"up_img max: {up_img.max()}")
 
     # plot the images
     plt.subplot(1, 4, 1)
