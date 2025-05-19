@@ -309,7 +309,6 @@ class DiffusionTrainer:
             print(f"Current Learning Rate at end of epoch {epoch+1}: {current_lr:.2e}") # write message on console
 
         new_best_val_loss = current_best_val_loss
-        # saved_best_this_epoch = False # Not strictly needed anymore if we only save best
         if val_loss_this_epoch is not None and val_loss_this_epoch < current_best_val_loss:
             new_best_val_loss = val_loss_this_epoch
             checkpoint_data = {
@@ -326,7 +325,6 @@ class DiffusionTrainer:
             
             torch.save(checkpoint_data, best_checkpoint_path)
             print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Val Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})") # write message on console
-            # saved_best_this_epoch = True
 
         if scheduler:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -517,7 +515,7 @@ class DiffusionTrainer:
         print(f"Training finished for mode '{self.mode}'. Final best validation loss: {current_best_val_loss:.4f}") # write message on console
 
     @staticmethod
-    def load_model_weights(device, model, model_path, verbose=False):
+    def load_model_weights(model, model_path, verbose=False, device='cuda'):
         """
         Loads model weights from a saved checkpoint file.
 
@@ -679,10 +677,6 @@ class DiffusionTrainer:
 
         return start_epoch, loaded_loss
 
-
-# --- ResidualGenerator Class (Copied from original, ensure it's consistent with your project structure) ---
-# This class is used for generating samples during training validation.
-# No direct changes for LR scheduler, but its usage in _generate_and_log_samples might need context.
 class ResidualGenerator:
     """
     A class for generating image residuals using a pre-trained diffusion model and a scheduler.
@@ -766,7 +760,7 @@ class ResidualGenerator:
               f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.") # Log init
 
     @torch.no_grad()
-    def generate_residuals(self, model, low_resolution_image, context_extractor, num_images=1, num_inference_steps=50): # Added context_extractor
+    def generate_residuals(self, model, features, num_images=1, num_inference_steps=50): # Added context_extractor
         """
         Generates image residuals using the provided diffusion model, context_extractor, and the configured scheduler.
 
@@ -788,13 +782,6 @@ class ResidualGenerator:
         """
         model.eval() # Set model to evaluation mode
         model.to(self.device) # Ensure model is on correct device
-        context_extractor.eval() # Set context_extractor to evaluation mode
-        context_extractor.to(self.device) # Ensure context_extractor is on correct device
-
-
-        if num_images != low_resolution_image.shape[0]:
-            num_images = low_resolution_image.shape[0]
-
 
         print(f"Generating {num_images} residuals using {num_inference_steps} steps "
               f"with {type(self.scheduler).__name__} (model expected to predict: '{self.predict_mode}') "
@@ -809,14 +796,6 @@ class ResidualGenerator:
         )
         image_latents = image_latents * self.scheduler.init_noise_sigma # Scale initial noise
 
-        # Prepare condition features using the context_extractor
-        with torch.no_grad():
-            # Assuming context_extractor returns (output_image, features_list) when get_fea=True
-            # We need the features_list for the U-Net's condition argument.
-            print(self.device)
-            _, condition_input_for_model = context_extractor(low_resolution_image.to(self.device), get_fea=True)
-            # condition_input_for_model should now be a list of tensors (feature maps)
-
         # Iteratively denoise the latents
         for t_step in tqdm(self.scheduler.timesteps, desc="Generating residuals"):
             model_input = image_latents # Current noisy latents for the residual
@@ -825,7 +804,7 @@ class ResidualGenerator:
 
             # Model predicts based on its training (either 'v' or 'noise' for the residual)
             # Pass the extracted feature list as the condition
-            model_output = model(model_input, t_for_model, condition=condition_input_for_model)
+            model_output = model(model_input, t_for_model, condition=features)
 
             # Scheduler step to compute the previous noisy sample
             scheduler_output = self.scheduler.step(model_output, t_step, image_latents)
@@ -835,99 +814,3 @@ class ResidualGenerator:
 
         print("Residual generation complete.") # Log completion
         return generated_residuals
-
-if __name__ == "__main__":
-    # Example usage for ResidualGenerator (illustrative)
-    # This requires a dummy model, a dummy low_resolution_image, and a dummy context_extractor for testing.
-    print("ResidualGenerator example usage (illustrative):")
-    try:
-        # Create a dummy Unet-like model for the example
-        class DummyUnet(torch.nn.Module):
-            def __init__(self, in_channels=3, out_channels=3, base_dim=32):
-                super().__init__()
-                self.in_channels = in_channels
-                self.out_channels = out_channels
-                self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-                print(f"DummyUnet initialized with in_channels={in_channels}, out_channels={out_channels}")
-
-            def forward(self, x, time, condition=None): # Condition is now a list of features
-                # x: noisy residual, time: timestep, condition: list of feature maps or None
-                # This dummy model just passes x through a conv layer.
-                # A real Unet would use time embeddings and incorporate condition features.
-                # print(f"DummyUnet forward: x.shape={x.shape}, time.shape={time.shape}")
-                # if condition is not None:
-                #     print(f"  Condition is a list of {len(condition)} tensors.")
-                #     for i, c_feat in enumerate(condition):
-                #         print(f"    condition[{i}].shape = {c_feat.shape}")
-                return self.conv(x)
-
-        # Create a dummy context_extractor model for the example
-        class DummyContextExtractor(torch.nn.Module):
-            def __init__(self, num_output_features=9, feature_channels=64): # Simulate RRDBNet with 8 blocks
-                super().__init__()
-                self.num_output_features = num_output_features
-                self.feature_channels = feature_channels
-                # Add a dummy parameter to make it a valid nn.Module and be movable to device
-                self.dummy_param = torch.nn.Parameter(torch.empty(0))
-
-
-            def forward(self, x_lr, get_fea=False):
-                # x_lr: low_resolution_image (B, C, H_lr, W_lr)
-                # Simulate returning a list of feature maps (feas) and a dummy SR output.
-                B, C_in, H_lr, W_lr = x_lr.shape
-                
-                # Dummy SR output (not really used by Unet, but RRDBNet returns it)
-                # Assuming sr_scale = 4 for this dummy
-                sr_scale = 4
-                dummy_sr_out = torch.randn(B, C_in, H_lr * sr_scale, W_lr * sr_scale, device=x_lr.device)
-                
-                features_list = []
-                if get_fea:
-                    for _ in range(self.num_output_features):
-                        # Each feature map has shape (B, feature_channels, H_lr, W_lr)
-                        feat = torch.randn(B, self.feature_channels, H_lr, W_lr, device=x_lr.device)
-                        features_list.append(feat)
-                    return dummy_sr_out, features_list
-                else:
-                    return dummy_sr_out
-
-
-        img_c = 3
-        hr_size = 160 # Example HR size
-        lr_size = hr_size // 4 # Example LR size (if downscale_factor=4)
-        current_device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-        generator = ResidualGenerator(
-            img_channels=img_c,
-            img_size=hr_size, # Residuals are generated at HR size
-            device=current_device,
-            num_train_timesteps=1000,
-            predict_mode='v_prediction' # or 'noise'
-        )
-        
-        unet_example = DummyUnet(in_channels=img_c, out_channels=img_c).to(current_device)
-        # Dummy context extractor, simulating RRDBNet(number_of_rrdb_blocks=8, rrdb_in_channels=64)
-        # which would produce 8+1=9 feature maps.
-        context_extractor_example = DummyContextExtractor(num_output_features=9, feature_channels=64).to(current_device)
-
-        dummy_low_res_image = torch.randn(1, img_c, lr_size, lr_size).to(current_device)
-
-        print(f"Generating residuals with dummy model and dummy context extractor. LR image shape: {dummy_low_res_image.shape}")
-        
-        generated_residuals_example = generator.generate_residuals(
-            model=unet_example,
-            low_resolution_image=dummy_low_res_image,
-            context_extractor=context_extractor_example, # Pass the dummy context_extractor
-            num_images=1, 
-            num_inference_steps=10 
-        )
-        print(f"Generated residuals shape: {generated_residuals_example.shape}") 
-        assert generated_residuals_example.shape == (1, img_c, hr_size, hr_size)
-        print("ResidualGenerator example completed successfully.")
-
-    except Exception as e:
-        import traceback
-        print(f"Error in ResidualGenerator example: {e}") 
-        traceback.print_exc()
-
-
