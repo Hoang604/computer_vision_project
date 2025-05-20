@@ -14,20 +14,20 @@ def train_rrdb_main(args):
     """
     # --- Setup Device ---
     if args.device.startswith("cuda") and not torch.cuda.is_available():
-        print(f"CUDA device {args.device} requested but CUDA not available. Using CPU.") # write message on console
+        print(f"CUDA device {args.device} requested but CUDA not available. Using CPU.") 
         device = torch.device("cpu")
     elif not args.device.startswith("cuda") and args.device != "cpu":
-        print(f"Invalid device specified: {args.device}. Using CPU if CUDA not available, else cuda:0.") # write message on console
+        print(f"Invalid device specified: {args.device}. Using CPU if CUDA not available, else cuda:0.") 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
-    print(f"Using device: {device}") # write message on console
+    print(f"Using device: {device}") 
 
     # --- Prepare Training Dataset and DataLoader ---
     train_dataset = ImageDataset(folder_path=args.image_folder, 
                                  img_size=args.img_size, 
                                  downscale_factor=args.downscale_factor)
-    print(f"Loaded {len(train_dataset)} training images from {args.image_folder}") # write message on console
+    print(f"Loaded {len(train_dataset)} training images from {args.image_folder}") 
 
     train_loader = DataLoader(
         train_dataset,
@@ -42,13 +42,13 @@ def train_rrdb_main(args):
     val_loader = None
     if args.val_image_folder:
         if not os.path.isdir(args.val_image_folder):
-            print(f"Warning: Validation image folder not found: {args.val_image_folder}. Proceeding without validation.") # write message on console
+            print(f"Warning: Validation image folder not found: {args.val_image_folder}. Proceeding without validation.") 
         else:
             val_dataset = ImageDataset(folder_path=args.val_image_folder,
                                        img_size=args.img_size, # Use same img_size for consistency
                                        downscale_factor=args.downscale_factor) # Use same downscale_factor
             if len(val_dataset) > 0:
-                print(f"Loaded {len(val_dataset)} validation images from {args.val_image_folder}") # write message on console
+                print(f"Loaded {len(val_dataset)} validation images from {args.val_image_folder}") 
                 val_loader = DataLoader(
                     val_dataset,
                     batch_size=args.val_batch_size, # Use separate batch size for validation
@@ -58,9 +58,9 @@ def train_rrdb_main(args):
                     drop_last=False # Evaluate all validation samples
                 )
             else:
-                print(f"Warning: No images found in validation folder: {args.val_image_folder}. Proceeding without validation.") # write message on console
+                print(f"Warning: No images found in validation folder: {args.val_image_folder}. Proceeding without validation.") 
     else:
-        print("No validation image folder provided. Proceeding without validation.") # write message on console
+        print("No validation image folder provided. Proceeding without validation.") 
 
 
     # --- Define configuration dictionaries from args ---
@@ -113,7 +113,7 @@ def train_rrdb_main(args):
         device=device
     )
 
-    print("\nStarting RRDBNet training process...") # write message on console
+    print("\nStarting RRDBNet training process...") 
     try:
         rrdb_trainer.train(
             train_loader=train_loader,
@@ -128,7 +128,7 @@ def train_rrdb_main(args):
             predict_residual=args.predict_residual
         )
     except Exception as train_error:
-        print(f"\nERROR occurred during RRDBNet training: {train_error}") # write message on console
+        print(f"\nERROR occurred during RRDBNet training: {train_error}") 
         import traceback
         traceback.print_exc()
         raise 
@@ -188,12 +188,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # --- Print Configuration ---
-    print(f"--- RRDBNet Training Configuration ---") # write message on console
+    print(f"--- RRDBNet Training Configuration ---") 
     for arg_name, arg_val in vars(args).items():
-        print(f"  {arg_name}: {arg_val}") # write message on console
-    print(f"  SR Scale (from downscale_factor): {args.downscale_factor}") # write message on console
+        print(f"  {arg_name}: {arg_val}") 
+    print(f"  SR Scale (from downscale_factor): {args.downscale_factor}") 
     if args.scheduler_type.lower() == 'cosineannealinglr' and args.cosine_t_max is None:
-        print(f"  CosineAnnealingLR T_max will default to total epochs: {args.epochs}") # write message on console
-    print(f"------------------------------------") # write message on console
+        print(f"  CosineAnnealingLR T_max will default to total epochs: {args.epochs}") 
+    print(f"------------------------------------") 
 
     train_rrdb_main(args)

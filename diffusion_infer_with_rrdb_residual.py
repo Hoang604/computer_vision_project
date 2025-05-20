@@ -50,7 +50,7 @@ def plot_result_v2(imgs_dict, save_path="result_v2.png"):
     
     plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust layout to make space for suptitle
     plt.savefig(save_path)
-    print(f"Result image saved to {save_path}") # write message on console
+    print(f"Result image saved to {save_path}") 
     plt.show()
 
 
@@ -60,7 +60,7 @@ def main_infer(args):
     with the new pipeline (RRDB base + Diffusion refinement).
     """
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}") # write message on console
+    print(f"Using device: {device}") 
 
     # 1. Load the RRDBNet model that was used for generating the base HR_RRDB
     # This configuration MUST match the RRDBNet used in preprocess_data_with_rrdb.py
@@ -81,9 +81,9 @@ def main_infer(args):
             device=device
         )
         rrdb_model_for_base_sr.eval()
-        print(f"RRDBNet for base SR loaded from: {args.rrdb_weights_path_for_base_sr}") # write message on console
+        print(f"RRDBNet for base SR loaded from: {args.rrdb_weights_path_for_base_sr}") 
     except Exception as e:
-        print(f"Error loading RRDBNet for base SR: {e}") # write message on console
+        print(f"Error loading RRDBNet for base SR: {e}") 
         return
 
     # 2. Load the RRDBNet model used as the Context Extractor for the U-Net
@@ -105,9 +105,9 @@ def main_infer(args):
             device=device
         )
         context_extractor_model.eval()
-        print(f"Context Extractor RRDBNet loaded from: {args.rrdb_weights_path_context_extractor}") # write message on console
+        print(f"Context Extractor RRDBNet loaded from: {args.rrdb_weights_path_context_extractor}") 
     except Exception as e:
-        print(f"Error loading Context Extractor RRDBNet: {e}") # write message on console
+        print(f"Error loading Context Extractor RRDBNet: {e}") 
         return
 
     # 3. Load the U-Net model (Diffusion model)
@@ -124,9 +124,9 @@ def main_infer(args):
             raise FileNotFoundError(f"U-Net weights not found at: {args.unet_weights_path}")
         DiffusionTrainer.load_model_weights(device, unet_model, args.unet_weights_path, verbose=True)
         unet_model.eval()
-        print(f"U-Net model loaded from: {args.unet_weights_path}") # write message on console
+        print(f"U-Net model loaded from: {args.unet_weights_path}") 
     except Exception as e:
-        print(f"Error loading U-Net model: {e}") # write message on console
+        print(f"Error loading U-Net model: {e}") 
         return
 
     # 4. Prepare input LR image
@@ -163,17 +163,17 @@ def main_infer(args):
             antialias=True
         ).unsqueeze(0).to(device) # Add batch dim, ensure on device
 
-        print(f"Loaded and prepared LR input from: {args.input_hr_image_for_infer}, LR shape: {lr_img_tensor_for_input.shape}") # write message on console
+        print(f"Loaded and prepared LR input from: {args.input_hr_image_for_infer}, LR shape: {lr_img_tensor_for_input.shape}") 
 
     except Exception as e:
-        print(f"Error preparing input image for inference: {e}") # write message on console
+        print(f"Error preparing input image for inference: {e}") 
         return
 
 
     # 5. Generate HR_RRDB (Base Super-Resolution)
     with torch.no_grad():
         hr_rrdb_tensor = rrdb_model_for_base_sr(lr_img_tensor_for_input).squeeze(0) # Remove batch dim for consistency
-    print(f"Generated HR_RRDB, shape: {hr_rrdb_tensor.shape}") # write message on console
+    print(f"Generated HR_RRDB, shape: {hr_rrdb_tensor.shape}") 
 
     # 6. Perform Diffusion-based Residual Prediction
     # The ResidualGenerator's img_size should match the HR size (args.img_size)
@@ -195,13 +195,13 @@ def main_infer(args):
             num_images=lr_img_tensor_for_input.shape[0], # Should be 1 in this example
             num_inference_steps=args.diffusion_inference_steps
         ).squeeze(0) # Remove batch dim
-    print(f"Predicted residual by diffusion, shape: {predicted_residual_tensor.shape}") # write message on console
+    print(f"Predicted residual by diffusion, shape: {predicted_residual_tensor.shape}") 
 
     # 7. Construct Final HR Image
     final_hr_constructed_tensor = hr_rrdb_tensor + predicted_residual_tensor
     # Clamp to valid range, e.g., [-1, 1]
     final_hr_constructed_tensor = torch.clamp(final_hr_constructed_tensor, -1.0, 1.0)
-    print(f"Constructed final HR, shape: {final_hr_constructed_tensor.shape}") # write message on console
+    print(f"Constructed final HR, shape: {final_hr_constructed_tensor.shape}") 
 
     # 8. Prepare images for plotting (convert to displayable format: HWC, [0,1] range, numpy)
     def to_display_format(tensor_chw_neg1_1):
@@ -263,9 +263,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     
-    print("--- Inference Configuration ---") # write message on console
+    print("--- Inference Configuration ---") 
     for arg_name, arg_val in vars(args).items():
-        print(f"  {arg_name}: {arg_val}") # write message on console
-    print("-----------------------------") # write message on console
+        print(f"  {arg_name}: {arg_val}") 
+    print("-----------------------------") 
     
     main_infer(args)

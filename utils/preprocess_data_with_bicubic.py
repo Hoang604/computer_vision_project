@@ -11,7 +11,7 @@ try:
     # We need upscale_image from bicubic.py
     from bicubic import upscale_image # [bicubic.py is a user uploaded file]
 except ImportError:
-    print("Please ensure bicubic.py is in the PYTHONPATH or the same directory.") # write message on console
+    print("Please ensure bicubic.py is in the PYTHONPATH or the same directory.") 
     exit(1)
 
 def preprocess_images_bicubic(args):
@@ -21,8 +21,8 @@ def preprocess_images_bicubic(args):
     Ensures Bicubic upscaled output is clamped to [-1, 1].
     """
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device} for initial tensor operations.") # write message on console
-    print("Note: bicubic.upscale_image might use CPU due to OpenCV/NumPy operations.") # write message on console
+    print(f"Using device: {device} for initial tensor operations.") 
+    print("Note: bicubic.upscale_image might use CPU due to OpenCV/NumPy operations.") 
 
     # 1. Create output directories
     path_hr_original = os.path.join(args.output_dir, 'hr_original')
@@ -35,10 +35,10 @@ def preprocess_images_bicubic(args):
 
     image_files = sorted([f for f in os.listdir(args.input_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
     if not image_files:
-        print(f"No images found in {args.input_dir}. Please check the path and file extensions.") # write message on console
+        print(f"No images found in {args.input_dir}. Please check the path and file extensions.") 
         return
         
-    print(f"Found {len(image_files)} images in {args.input_dir}. Processing one by one.") # write message on console
+    print(f"Found {len(image_files)} images in {args.input_dir}. Processing one by one.") 
 
     for img_name in tqdm(image_files, desc="Preprocessing images"):
         img_path = os.path.join(args.input_dir, img_name)
@@ -51,7 +51,7 @@ def preprocess_images_bicubic(args):
             if image_pil.width != args.img_size or image_pil.height != args.img_size:
                 print(f"Warning: Image {img_name} has dimensions {image_pil.size}, "
                       f"but args.img_size is ({args.img_size}, {args.img_size}). "
-                      f"Ensure input HR images are pre-resized to the target img_size.") # write message on console
+                      f"Ensure input HR images are pre-resized to the target img_size.") 
             
             original_hr_tensor_0_1 = TF.to_tensor(image_pil) # (C, H, W), [0,1]
             # Transform to [-1, 1] range, move to device
@@ -62,7 +62,7 @@ def preprocess_images_bicubic(args):
             low_res_w = args.img_size // args.downscale_factor
 
             if low_res_h == 0 or low_res_w == 0:
-                print(f"Error: Calculated low_res dimension is zero for {img_name}. Skipping.") # write message on console
+                print(f"Error: Calculated low_res dimension is zero for {img_name}. Skipping.") 
                 continue
 
             # Create LR tensor on the specified device, range should be maintained around [-1,1]
@@ -87,7 +87,7 @@ def preprocess_images_bicubic(args):
                 save_image=False # We are saving tensors, not image files here
             )
             if hr_bicubic_upscaled_hwc_0_1 is None:
-                print(f"Error: bicubic.upscale_image returned None for {img_name}. Skipping.") # write message on console
+                print(f"Error: bicubic.upscale_image returned None for {img_name}. Skipping.") 
                 continue
             
             # Ensure it's a tensor if it's not already (upscale_image can return ndarray or tensor)
@@ -111,7 +111,7 @@ def preprocess_images_bicubic(args):
             torch.save(hr_bicubic_upscaled_final.cpu(), os.path.join(path_hr_bicubic_upscaled, f"{base_filename}.pt"))
                 
         except Exception as e:
-            print(f"Error processing image {img_name}: {e}") # write message on console
+            print(f"Error processing image {img_name}: {e}") 
             traceback.print_exc()
 
 
@@ -136,11 +136,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     
-    print("--- Preprocessing Configuration (Bicubic Upscaling) ---") # write message on console
+    print("--- Preprocessing Configuration (Bicubic Upscaling) ---") 
     for arg_name, arg_val in vars(args).items():
-        print(f"  {arg_name}: {arg_val}") # write message on console
-    print("-------------------------------------------------------") # write message on console
+        print(f"  {arg_name}: {arg_val}") 
+    print("-------------------------------------------------------") 
 
     preprocess_images_bicubic(args)
 
-    print("Bicubic preprocessing finished.") # write message on console
+    print("Bicubic preprocessing finished.") 

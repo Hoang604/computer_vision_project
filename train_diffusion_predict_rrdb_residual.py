@@ -1,13 +1,10 @@
-# train_diffusion.py
 import torch
 from torch.utils.data import DataLoader
-# Ensure this import path is correct for your project structure
 from utils.dataset import ImageDatasetRRDB
 import os
 import argparse
 from diffusion_modules import Unet
 from diffusion_trainer import DiffusionTrainer
-from rrdb_trainer import BasicRRDBNetTrainer # For loading context extractor
 
 def train_diffusion(args):
     """
@@ -31,7 +28,7 @@ def train_diffusion(args):
 
     # --- Setup Dataset and DataLoader ---
     # Create the dataset using the preprocessed data folder
-    print(f"Loading preprocessed data from: {args.preprocessed_data_folder}") # write message on console
+    print(f"Loading preprocessed data from: {args.preprocessed_data_folder}") 
     train_dataset = ImageDatasetRRDB(
         preprocessed_folder_path=args.preprocessed_data_folder,
         img_size=args.img_size, # Passed for potential verification within ImageDataset
@@ -51,14 +48,14 @@ def train_diffusion(args):
     )
     val_loader = None
     if args.val_preprocessed_data_folder:
-        print(f"Loading validation data from: {args.val_preprocessed_data_folder}") # write message on console
+        print(f"Loading validation data from: {args.val_preprocessed_data_folder}") 
         val_dataset = ImageDatasetRRDB(
             preprocessed_folder_path=args.val_preprocessed_data_folder,
             img_size=args.img_size,
             downscale_factor=args.downscale_factor,
             apply_hflip=args.apply_hflip # Use specific arg for validation hflip (usually False)
         )
-        print(f"Loaded {len(val_dataset)} samples for validation.") # write message on console
+        print(f"Loaded {len(val_dataset)} samples for validation.") 
         val_loader = DataLoader(
             val_dataset,
             batch_size=args.batch_size, # Use specific batch size for validation
@@ -68,7 +65,7 @@ def train_diffusion(args):
             drop_last=False # Usually False for validation to evaluate all samples
         )
     else:
-        print("No validation data folder provided. Skipping validation.") # write message on console
+        print("No validation data folder provided. Skipping validation.") 
 
 
     # --- Initialize DiffusionTrainer ---
@@ -143,40 +140,12 @@ def train_diffusion(args):
     else:
         print("No valid pre-trained UNet weights path found or specified. Starting UNet training from scratch.") # Log starting from scratch
 
-    # --- Initialize the context_extractor (RRDBNet) ---
-    # This RRDBNet is used to extract features from LR images to condition the U-Net.
-    # It should be a well-trained SR model itself, or at least a good feature extractor.
-    context_extractor_config = {
-        'in_nc': args.img_channels,
-        'out_nc': args.img_channels, # Output channels of RRDBNet, not directly used if only features are taken
-        'num_feat': args.rrdb_num_feat,
-        'num_block': args.number_of_rrdb_blocks, # Number of RRDB blocks for context extractor
-        'gc': args.rrdb_gc,
-        'sr_scale': args.downscale_factor # sr_scale should match how LR images were generated
-    }
-    try:
-        # Ensure rrdb_weights_path_context_extractor points to the weights for the *feature extractor* RRDBNet
-        if not args.rrdb_weights_path_context_extractor or not os.path.exists(args.rrdb_weights_path_context_extractor):
-            raise FileNotFoundError(f"RRDBNet weights for context extractor not found at: {args.rrdb_weights_path_context_extractor}")
-            
-        context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(
-            model_path=args.rrdb_weights_path_context_extractor,
-            model_config=context_extractor_config,
-            device=device
-        )
-        print(f"Context extractor RRDBNet loaded from: {args.rrdb_weights_path_context_extractor}") # write message on console
-    except Exception as e:
-        print(f"Error initializing RRDBNet context extractor: {e}") # write message on console
-        print("Ensure --rrdb_weights_path_context_extractor is set correctly and model config matches.") # write message on console
-        raise
-
     # --- Start Training ---
     print(f"\nStarting diffusion model training (mode: {args.diffusion_mode}, UNet conditioned on RRDBNet features from LR)...") # Log start of training
     try:
         diffusion_trainer.train(
             dataset=train_loader,
             model=unet_model,
-            context_extractor=context_extractor_model,
             optimizer=optimizer,
             scheduler=scheduler if args.scheduler_type.lower() != "none" else None,
             val_dataset=val_loader,
@@ -185,7 +154,6 @@ def train_diffusion(args):
             epochs=args.epochs,
             start_epoch=start_epoch,
             best_loss=best_loss,
-            context_selection_mode=context_mode_for_trainer, # Pass context selection mode
             log_dir_param=args.continue_log_dir,
             checkpoint_dir_param=args.continue_checkpoint_dir,
             log_dir_base=args.base_log_dir,

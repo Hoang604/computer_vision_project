@@ -222,24 +222,86 @@ class DiffusionTrainer:
         else:
             raise ValueError(f"Unsupported training mode: {self.mode}") # Should not happen if validated in __init__
         return target
+    
+    def _prepare_batched_features(self, lr_features_batch_of_lists, actual_batch_size):
+        """
+        Converts a list of feature lists (one per sample) into a list of batched feature tensors.
+        Expected input: lr_features_batch_of_lists = [ [feat1_img1, feat2_img1, ...], [feat1_img2, feat2_img2, ...], ... ]
+        Expected output: condition_features_list = [ batched_feat1, batched_feat2, ... ]
+                         where batched_feat_i has shape (B, C_i, H_i, W_i)
+        """
+        condition_features_list = []
+        if not lr_features_batch_of_lists: # Check if the outer list is empty
+            # print("Warning: lr_features_batch_of_lists is empty. No features to prepare.") 
+            return [] # Return empty list, U-Net might handle None condition or error out
 
-    def _perform_batch_step(self, model, context_extractor, batch_data, optimizer,
+        if actual_batch_size > 0:
+            # Check if the structure matches list of lists of tensors
+            if isinstance(lr_features_batch_of_lists, list) and \
+               len(lr_features_batch_of_lists) == actual_batch_size and \
+               all(isinstance(item, list) for item in lr_features_batch_of_lists) and \
+               all(all(isinstance(t, torch.Tensor) for t in inner_list) for inner_list in lr_features_batch_of_lists):
+
+                if not lr_features_batch_of_lists[0]: # Check if the inner list for the first sample is empty
+                    # print("Warning: Inner feature list is empty for the first sample. No features to prepare.") 
+                    return []
+
+                num_feature_tensors_per_sample = len(lr_features_batch_of_lists[0])
+                if num_feature_tensors_per_sample == 0:
+                    # print("Warning: No feature tensors per sample. No features to prepare.") 
+                    return []
+
+                for i in range(num_feature_tensors_per_sample):
+                    # Gather the i-th feature tensor from all samples in the batch
+                    try:
+                        feats_for_layer_i = [sample_features[i] for sample_features in lr_features_batch_of_lists]
+                    except IndexError:
+                        # This can happen if inner lists have different lengths, which indicates a data problem
+                        print(f"Error: Feature lists for samples in the batch have inconsistent lengths at feature index {i}.") 
+                        print(f"Length of feature list for sample 0: {len(lr_features_batch_of_lists[0])}") 
+                        # Consider raising an error or returning empty to halt problematic training
+                        raise ValueError("Inconsistent feature list lengths in batch.")
+
+                    # Stack them to create a batched tensor and move to device
+                    try:
+                        batched_feat_i = torch.stack(feats_for_layer_i).to(self.device)
+                        condition_features_list.append(batched_feat_i)
+                    except Exception as e_stack:
+                        print(f"Error stacking feature tensors for layer {i}: {e_stack}") 
+                        print(f"Shapes of tensors being stacked for layer {i}: {[f.shape for f in feats_for_layer_i]}") 
+                        raise
+            # Handling for batch_size=1 where collate_fn might not wrap the single list of features into another list
+            elif actual_batch_size == 1 and isinstance(lr_features_batch_of_lists, list) and \
+                 all(isinstance(t, torch.Tensor) for t in lr_features_batch_of_lists):
+                # lr_features_batch_of_lists is actually the feature list for the single sample
+                if not lr_features_batch_of_lists: # Check if the feature list itself is empty
+                    # print("Warning: Feature list for single sample batch is empty.") 
+                    return []
+                condition_features_list = [feat.unsqueeze(0).to(self.device) for feat in lr_features_batch_of_lists]
+            else:
+                print(f"Error: Unexpected format for lr_features_batch_of_lists. Batch size: {actual_batch_size}, Type: {type(lr_features_batch_of_lists)}") 
+                if lr_features_batch_of_lists: print(f"First element type: {type(lr_features_batch_of_lists[0])}") 
+                # Handle error: Unexpected format for lr_features_batch_of_lists
+                raise ValueError("Unexpected format for lr_features_batch_of_lists in _prepare_batched_features.")
+        return condition_features_list
+
+
+    def _perform_batch_step(self, model, batch_data, optimizer,
                             accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True):
-        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual)
-        low_res_image_batch, _, _, residual_image_batch = batch_data 
+        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual, lr_features_list_batch)
+        _, _, _, residual_image_batch, lr_features_batch_of_lists = batch_data
 
-        low_res_image_batch = low_res_image_batch.to(self.device)
+        # low_res_image_batch = low_res_image_batch.to(self.device) # Not directly used if features are pre-loaded
         residual_image_batch = residual_image_batch.to(self.device)
 
-        with torch.set_grad_enabled(is_training): 
-            with torch.no_grad():
-                _, condition_features_list = context_extractor(low_res_image_batch, get_fea=True)
+        actual_batch_size = residual_image_batch.shape[0]
+        condition_features_list = self._prepare_batched_features(lr_features_batch_of_lists, actual_batch_size)
 
-            actual_batch_size = residual_image_batch.shape[0]
+        with torch.set_grad_enabled(is_training):
             t = torch.randint(0, self.timesteps, (actual_batch_size,), device=self.device, dtype=torch.long)
             residual_image_batch_t, noise_added = self.q_sample(residual_image_batch, t)
             target = self._get_training_target(noise_added, residual_image_batch, t)
-            
+
             predicted_output = model(residual_image_batch_t, t, condition=condition_features_list)
             loss = F.mse_loss(predicted_output, target)
 
@@ -254,43 +316,34 @@ class DiffusionTrainer:
                 current_accumulation_idx = 0
                 global_step_optimizer +=1
                 updated_optimizer_this_step = True
-        
+
         return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step
 
-    def _run_validation_epoch(self, model, context_extractor, val_loader, writer, epoch):
-        """
-        Runs a validation epoch.
-        """
-        model.eval() # Set model to evaluation mode
-        context_extractor.eval() # Set context extractor to evaluation mode
-        
+    def _run_validation_epoch(self, model, val_loader, writer, epoch):
+        model.eval()
         total_val_loss = 0.0
         num_val_batches = 0
-        
-        print(f"\nRunning validation for epoch {epoch+1}...") # write message on console
+        print(f"\nRunning validation for epoch {epoch+1}...") 
         progress_bar_val = tqdm(total=len(val_loader), desc=f"Validation Epoch {epoch+1}")
 
-        with torch.no_grad(): # Ensure no gradients are computed during validation
+        with torch.no_grad():
             for batch_idx, batch_data in enumerate(val_loader):
-                # Pass dummy optimizer, accumulation_steps, etc., as they are not used in eval mode
-                # is_training is set to False
                 loss_value, _, _, _ = self._perform_batch_step(
-                    model, context_extractor, batch_data, 
+                    model, batch_data,
                     optimizer=None, accumulation_steps=1, current_accumulation_idx=0, global_step_optimizer=0,
-                    is_training=False 
+                    is_training=False
                 )
                 total_val_loss += loss_value
                 num_val_batches += 1
                 progress_bar_val.update(1)
                 progress_bar_val.set_postfix(val_loss_batch=f"{loss_value:.4f}")
-        
+
         progress_bar_val.close()
         avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else float('nan')
-        print(f"Epoch {epoch+1} Average Validation Loss ({self.mode}): {avg_val_loss:.4f}") # write message on console
-        
+        print(f"Epoch {epoch+1} Average Validation Loss ({self.mode}): {avg_val_loss:.4f}") 
+
         if writer:
             writer.add_scalar(f'Loss_{self.mode}/validation_epoch_avg', avg_val_loss, epoch + 1)
-            
         return avg_val_loss
 
     def _log_and_checkpoint_epoch_end(self, epoch, model, optimizer, scheduler, train_epoch_losses,
@@ -300,13 +353,13 @@ class DiffusionTrainer:
                                         dataset_for_samples, context_extractor): # Removed save_every_n_epochs
         """Handle end-of-epoch tasks: log loss, save checkpoint, step scheduler, generate sample images."""
         mean_train_loss = np.mean(train_epoch_losses) if train_epoch_losses else float('nan')
-        print(f"Epoch {epoch+1} Average Training Loss ({self.mode}): {mean_train_loss:.4f}") # write message on console
+        print(f"Epoch {epoch+1} Average Training Loss ({self.mode}): {mean_train_loss:.4f}") 
         writer.add_scalar(f'Loss_{self.mode}/train_epoch_avg', mean_train_loss, epoch + 1)
 
         if optimizer.param_groups:
             current_lr = optimizer.param_groups[0]['lr']
             writer.add_scalar(f'LearningRate/epoch', current_lr, epoch + 1)
-            print(f"Current Learning Rate at end of epoch {epoch+1}: {current_lr:.2e}") # write message on console
+            print(f"Current Learning Rate at end of epoch {epoch+1}: {current_lr:.2e}") 
 
         new_best_val_loss = current_best_val_loss
         if val_loss_this_epoch is not None and val_loss_this_epoch < current_best_val_loss:
@@ -324,7 +377,7 @@ class DiffusionTrainer:
                 checkpoint_data['scheduler_state_dict'] = scheduler.state_dict()
             
             torch.save(checkpoint_data, best_checkpoint_path)
-            print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Val Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})") # write message on console
+            print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Val Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})") 
         try:
             print(f"Saving model at epoch {epoch + 1}")
             checkpoint_data2 = {
@@ -348,122 +401,122 @@ class DiffusionTrainer:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 if val_loss_this_epoch is not None:
                     scheduler.step(val_loss_this_epoch) 
-                    print(f"ReduceLROnPlateau scheduler stepped with val_loss {val_loss_this_epoch:.4f}.") # write message on console
+                    print(f"ReduceLROnPlateau scheduler stepped with val_loss {val_loss_this_epoch:.4f}.") 
                 else:
-                    print("ReduceLROnPlateau scheduler not stepped as validation was not run this epoch.") # write message on console
+                    print("ReduceLROnPlateau scheduler not stepped as validation was not run this epoch.") 
             else:
                 scheduler.step() 
-                print(f"Epoch-based scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") # write message on console
+                print(f"Epoch-based scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") 
         
         if dataset_for_samples is not None: # Generate samples
             try:
                 self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor)
             except Exception as e_sample:
-                print(f"Error during sample generation: {e_sample}") # write message on console
+                print(f"Error during sample generation: {e_sample}") 
         return new_best_val_loss
 
-    def _generate_and_log_samples(self, model, dataset, epoch, writer, context_extractor): # Added context_extractor
-        """Generate sample images and log to TensorBoard."""
-
-        print(f"Generating sample images for TensorBoard at epoch {epoch+1}...") # Log sample generation start
+    def _generate_and_log_samples(self, model, dataset, epoch, writer): # Removed context_extractor
+        print(f"Generating sample images for TensorBoard at epoch {epoch+1}...") 
         try:
-            # Assuming ResidualGenerator is defined and accessible
+            img_channels_sample = 3 # Default
+            img_size_sample = 160   # Default
+            if hasattr(dataset, 'dataset') and hasattr(dataset.dataset, 'img_size'):
+                img_size_sample = dataset.dataset.img_size
+                # Try to infer channels from a sample if possible, though less direct
+                # For now, assume 3 channels for residual.
+            
             generator = ResidualGenerator(
-                img_channels=model.final_conv[-1].out_channels if hasattr(model, 'final_conv') and hasattr(model.final_conv[-1], 'out_channels') else 3, # Infer channels if possible
-                img_size=dataset.dataset.img_size if hasattr(dataset, 'dataset') and hasattr(dataset.dataset, 'img_size') else 160, # Infer img_size
+                img_channels=img_channels_sample, # U-Net output channels for residual
+                img_size=img_size_sample,
                 device=self.device,
                 num_train_timesteps=self.timesteps,
-                predict_mode=self.mode # Use the trainer's mode for the generator
+                predict_mode=self.mode
             )
         except NameError:
-            print("Warning: ResidualGenerator class not found or cannot infer parameters. Skipping sample generation.") # Log warning
+            print("Warning: ResidualGenerator class not found. Skipping sample generation.") 
             return
         except Exception as e:
-            print(f"Error initializing ResidualGenerator: {e}. Skipping sample generation.") # Log error
+            print(f"Error initializing ResidualGenerator: {e}. Skipping sample generation.") 
             return
 
-
-        sample_images_data = [] # List to store image data for logging
-        # Get a few samples from the dataset to generate images
-        num_samples_to_generate = min(3, len(dataset.dataset) if hasattr(dataset, 'dataset') else 3) # Generate a few samples
-        if num_samples_to_generate == 0:        # saved_best_this_epoch = False # Not strictly needed anymore if we only save best
-
-            print("Warning: Dataset is empty or too small. Skipping sample generation.") # Log warning
+        sample_images_data = []
+        num_samples_to_generate = min(3, len(dataset.dataset) if hasattr(dataset, 'dataset') else 3)
+        if num_samples_to_generate == 0:
+            print("Warning: Dataset is empty or too small for sample generation.") 
             return
 
-        dataset_iter = iter(dataset) # Create an iterator for the dataset
+        dataset_iter = iter(dataset)
         for _ in range(num_samples_to_generate):
             try:
-                # Unpack batch data - assuming (low_res, upscaled_bicubic, original_hr, original_residual)
-                low_res_b, up_scale_b, original_b, residual_b_cpu = next(dataset_iter)
+                # Unpack: low_res, upscaled_rrdb, original_hr, original_residual, lr_features_list
+                low_res_b, up_scale_b, original_b, residual_b_cpu, lr_features_sample_list_cpu = next(dataset_iter)
             except StopIteration:
-                print("Warning: Not enough data in dataset to generate all samples.") # Log warning
+                print("Warning: Not enough data in dataset to generate all samples.") 
                 break
 
             # Prepare single image samples for generation
-            low_res_img = low_res_b[0].unsqueeze(0).to(self.device) # LR image for conditioning
-            up_scale_img = up_scale_b[0].unsqueeze(0).to(self.device) # Bicubic upscaled for reconstruction base
-            original_img_cpu = original_b[0].cpu().numpy() # Original HR image (CPU, numpy)
-            residual_img_for_recon = residual_b_cpu[0].unsqueeze(0).to(self.device) # Ground truth residual
+            # low_res_img_for_context_extractor = low_res_b[0].unsqueeze(0).to(self.device) # Not needed if features are pre-loaded
+            up_scale_img_for_recon = up_scale_b[0].unsqueeze(0).to(self.device) # Base for reconstruction
+            original_img_cpu_display = original_b[0].cpu().numpy()
+            # residual_gt_for_recon = residual_b_cpu[0].unsqueeze(0).to(self.device) # GT residual
 
-            _, features = context_extractor(low_res_img, get_fea=True) # Extract features from low-res image
+            # Prepare batched features for the single sample
+            # lr_features_sample_list_cpu is a list of tensors for one sample
+            # The generator expects features in the same format as the U-Net
+            features_for_sample_gen = [feat.unsqueeze(0).to(self.device) for feat in lr_features_sample_list_cpu]
 
-            # Generate residual using the generator, now passing context_extractor
+
             generated_residual = generator.generate_residuals(
                 model=model,
-                features=features,
-                num_images=1
+                features=features_for_sample_gen, # Pass pre-loaded and batched features
+                num_images=1 # Generating for one sample at a time here
             )
-            reconstructed_image = up_scale_img + generated_residual # Reconstruct HR image
-            reconstructed_image = torch.clamp(reconstructed_image, -1.0, 1.0) # Clamp to [-1, 1]
-            reconstructed_image_norm = (reconstructed_image + 1.0) / 2.0 # Normalize to [0, 1] for logging
-            reconstructed_image_np = reconstructed_image_norm.cpu().numpy().squeeze(0) # To CPU, numpy, (C,H,W)
+            reconstructed_image = up_scale_img_for_recon + generated_residual
+            reconstructed_image = torch.clamp(reconstructed_image, -1.0, 1.0)
+            reconstructed_image_norm = (reconstructed_image + 1.0) / 2.0
+            reconstructed_image_np = reconstructed_image_norm.cpu().numpy().squeeze(0)
 
-            # Original image reconstructed from original residual (for comparison)
-            original_reconstructed_image = up_scale_img + residual_img_for_recon # Reconstruct using GT residual
-            original_reconstructed_image = torch.clamp(original_reconstructed_image, -1.0, 1.0) # Clamp
-            original_reconstructed_image_norm = (original_reconstructed_image + 1.0) / 2.0 # Normalize
-            original_reconstructed_image_np = original_reconstructed_image_norm.cpu().numpy().squeeze(0) # To CPU, numpy
+            # For comparison: original reconstructed from its true residual
+            original_reconstructed_image = up_scale_img_for_recon + residual_b_cpu[0].unsqueeze(0).to(self.device)
+            original_reconstructed_image = torch.clamp(original_reconstructed_image, -1.0, 1.0)
+            original_reconstructed_image_norm = (original_reconstructed_image + 1.0) / 2.0
+            original_reconstructed_image_np = original_reconstructed_image_norm.cpu().numpy().squeeze(0)
 
-            # Prepare images for logging (CHW format, [0,1] range)
-            low_res_log = (low_res_img.squeeze(0).cpu().numpy() + 1.0) / 2.0 # LR image, normalized
+            low_res_log = (low_res_b[0].cpu().numpy() + 1.0) / 2.0
 
             sample_images_data.append({
-                "low_res": low_res_log, # (C,H_lr,W_lr), range [0,1]
-                "generated_hr": reconstructed_image_np, # (C,H_hr,W_hr), range [0,1]
-                "original_hr": (original_img_cpu + 1.0) / 2.0, # (C,H_hr,W_hr), range [0,1]
-                "reconstructed_original_hr": original_reconstructed_image_np # (C,H_hr,W_hr), range [0,1]
+                "low_res": low_res_log,
+                "generated_hr": reconstructed_image_np,
+                "original_hr": (original_img_cpu_display + 1.0) / 2.0,
+                "reconstructed_original_hr": original_reconstructed_image_np
             })
 
-        # Log images to TensorBoard
         for i, imgs_dict in enumerate(sample_images_data):
             writer.add_image(f'Sample_{i}/01_LowRes_Input', imgs_dict["low_res"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/02_Generated_HR', imgs_dict["generated_hr"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/02_Generated_HR_Refined', imgs_dict["generated_hr"], epoch + 1, dataformats='CHW')
             writer.add_image(f'Sample_{i}/03_Original_HR_GroundTruth', imgs_dict["original_hr"], epoch + 1, dataformats='CHW')
             writer.add_image(f'Sample_{i}/04_Reconstructed_from_GT_Residual', imgs_dict["reconstructed_original_hr"], epoch + 1, dataformats='CHW')
-        print(f"Logged {len(sample_images_data)} sample images to TensorBoard.") # Log completion
+        print(f"Logged {len(sample_images_data)} sample images to TensorBoard.") 
 
 
     def train(self,
-                dataset: DataLoader, 
+                dataset: DataLoader,
                 model: torch.nn.Module,
-                context_extractor:torch.nn.Module,
                 optimizer,
                 scheduler=None,
-                val_dataset: DataLoader = None, 
-                val_every_n_epochs: int = 1,   
+                val_dataset: DataLoader = None,
+                val_every_n_epochs: int = 1,
                 accumulation_steps=1,
                 epochs=100,
                 start_epoch=0,
-                best_loss=float('inf'), 
+                best_loss=float('inf'),
                 log_dir_param=None,
                 checkpoint_dir_param=None,
-                log_dir_base="/media/hoangdv/cv_logs_diffusion",
-                checkpoint_dir_base="/media/hoangdv/cv_checkpoints_diffusion"
+                log_dir_base="./logs_diffusion",
+                checkpoint_dir_base="./checkpoints_diffusion"
              ) -> None:
 
         model.to(self.device)
-        context_extractor.to(self.device)
 
         writer, checkpoint_dir, log_dir, best_checkpoint_path = self._setup_training_directories_and_writer(
             log_dir_base, checkpoint_dir_base, log_dir_param, checkpoint_dir_param
@@ -472,31 +525,28 @@ class DiffusionTrainer:
         global_step_optimizer, batch_step_counter, current_accumulation_idx = self._initialize_training_steps(
             start_epoch, len(dataset), accumulation_steps
         )
-        
+
         current_best_val_loss = best_loss if start_epoch > 0 else float('inf')
 
-        print(f"Starting training in '{self.mode}' mode on device: {self.device} with {accumulation_steps} accumulation steps.") # write message on console
-        print(f"Logging to: {log_dir}") # write message on console
-        print(f"Saving best checkpoints to: {checkpoint_dir}") # write message on console (clarified)
-        if val_dataset:
-            print(f"Validation will be performed every {val_every_n_epochs} epoch(s).") # write message on console
-        print(f"Initial global optimizer steps: {global_step_optimizer}, initial batch steps: {batch_step_counter}") # write message on console
-        print(f"Initial best validation loss: {current_best_val_loss:.6f}") # write message on console
+        print(f"Starting training in '{self.mode}' mode on device: {self.device} with {accumulation_steps} accumulation steps.") 
+        print(f"Logging to: {log_dir}") 
+        print(f"Saving best checkpoints to: {checkpoint_dir}") 
+        if val_dataset: print(f"Validation will be performed every {val_every_n_epochs} epoch(s).") 
+        print(f"Initial global optimizer steps: {global_step_optimizer}, initial batch steps: {batch_step_counter}") 
+        print(f"Initial best validation loss: {current_best_val_loss:.6f}") 
 
-        if start_epoch == 0:
-             optimizer.zero_grad()
+        if start_epoch == 0: optimizer.zero_grad()
 
         for epoch in range(start_epoch, epochs):
-            print(f"\nEpoch {epoch+1}/{epochs}") # write message on console
-            model.train() 
-            context_extractor.eval() 
+            print(f"\nEpoch {epoch+1}/{epochs}") 
+            model.train()
 
             progress_bar_train = tqdm(total=len(dataset), desc=f"Training ({self.mode}, Epoch {epoch+1})")
             train_epoch_losses = []
 
             for batch_idx, batch_data in enumerate(dataset):
                 loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer = self._perform_batch_step(
-                    model, context_extractor, batch_data, optimizer,
+                    model, batch_data, optimizer,
                     accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True
                 )
 
@@ -508,30 +558,29 @@ class DiffusionTrainer:
                 progress_bar_train.update(1)
                 progress_bar_train.set_postfix(loss=f"{loss_value:.4f}", opt_steps=global_step_optimizer, lr=f"{optimizer.param_groups[0]['lr']:.2e}")
                 batch_step_counter += 1
-            
+
             progress_bar_train.close()
-            
+
             current_val_loss_this_epoch = None
             if val_dataset and (epoch + 1) % val_every_n_epochs == 0:
-                current_val_loss_this_epoch = self._run_validation_epoch(model, context_extractor, val_dataset, writer, epoch)
-            
+                current_val_loss_this_epoch = self._run_validation_epoch(model, val_dataset, writer, epoch)
+
             current_best_val_loss = self._log_and_checkpoint_epoch_end(
-                epoch, model, optimizer, scheduler, train_epoch_losses, 
+                epoch, model, optimizer, scheduler, train_epoch_losses,
                 current_best_val_loss, current_val_loss_this_epoch,
-                global_step_optimizer, best_checkpoint_path, writer, 
-                val_dataset if val_dataset else dataset, 
-                context_extractor
+                global_step_optimizer, best_checkpoint_path, writer,
+                val_dataset if val_dataset else dataset
             )
 
         if current_accumulation_idx > 0:
-            print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...") # write message on console
+            print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...") 
             optimizer.step()
             optimizer.zero_grad()
             global_step_optimizer +=1
-            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}") # write message on console
+            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}") 
 
         writer.close()
-        print(f"Training finished for mode '{self.mode}'. Final best validation loss: {current_best_val_loss:.4f}") # write message on console
+        print(f"Training finished for mode '{self.mode}'. Final best validation loss: {current_best_val_loss:.4f}") 
 
     @staticmethod
     def load_model_weights(model, model_path, verbose=False, device='cuda'):
