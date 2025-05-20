@@ -1,29 +1,33 @@
 import torch
-import torch.nn.functional as F
+# import torch.nn.functional as F # Not directly used in this script
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
-from rrdb_trainer import BasicRRDBNetTrainer # Assuming rrdb_trainer.py is in the same directory or accessible in PYTHONPATH
+# from torch.utils.tensorboard import SummaryWriter # Handled by trainer
+from rrdb_trainer import BasicRRDBNetTrainer 
 import argparse
 from utils.dataset import ImageDataset # Or your appropriate dataset module
+import os # For checking if val_image_folder exists
 
 def train_rrdb_main(args):
     """
-    Main function to set up and run RRDBNet training with configurable schedulers.
+    Main function to set up and run RRDBNet training with configurable schedulers
+    and optional validation.
     """
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    # --- Setup Device ---
     if args.device.startswith("cuda") and not torch.cuda.is_available():
-        print(f"CUDA device {args.device} requested but CUDA not available. Using CPU.")
+        print(f"CUDA device {args.device} requested but CUDA not available. Using CPU.") # write message on console
         device = torch.device("cpu")
     elif not args.device.startswith("cuda") and args.device != "cpu":
-        print(f"Invalid device specified: {args.device}. Using CPU if CUDA not available, else cuda:0.")
+        print(f"Invalid device specified: {args.device}. Using CPU if CUDA not available, else cuda:0.") # write message on console
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    else:
+        device = torch.device(args.device)
+    print(f"Using device: {device}") # write message on console
 
-    # --- Prepare Dataset and DataLoader ---
+    # --- Prepare Training Dataset and DataLoader ---
     train_dataset = ImageDataset(folder_path=args.image_folder, 
                                  img_size=args.img_size, 
                                  downscale_factor=args.downscale_factor)
-    print(f"Loaded {len(train_dataset)} images from {args.image_folder}")
+    print(f"Loaded {len(train_dataset)} training images from {args.image_folder}") # write message on console
 
     train_loader = DataLoader(
         train_dataset,
@@ -33,6 +37,31 @@ def train_rrdb_main(args):
         pin_memory=True,
         drop_last=True
     )
+
+    # --- Prepare Validation Dataset and DataLoader (Optional) ---
+    val_loader = None
+    if args.val_image_folder:
+        if not os.path.isdir(args.val_image_folder):
+            print(f"Warning: Validation image folder not found: {args.val_image_folder}. Proceeding without validation.") # write message on console
+        else:
+            val_dataset = ImageDataset(folder_path=args.val_image_folder,
+                                       img_size=args.img_size, # Use same img_size for consistency
+                                       downscale_factor=args.downscale_factor) # Use same downscale_factor
+            if len(val_dataset) > 0:
+                print(f"Loaded {len(val_dataset)} validation images from {args.val_image_folder}") # write message on console
+                val_loader = DataLoader(
+                    val_dataset,
+                    batch_size=args.val_batch_size, # Use separate batch size for validation
+                    shuffle=False, # No need to shuffle validation data
+                    num_workers=args.num_workers,
+                    pin_memory=True,
+                    drop_last=False # Evaluate all validation samples
+                )
+            else:
+                print(f"Warning: No images found in validation folder: {args.val_image_folder}. Proceeding without validation.") # write message on console
+    else:
+        print("No validation image folder provided. Proceeding without validation.") # write message on console
+
 
     # --- Define configuration dictionaries from args ---
     sr_scale = args.downscale_factor 
@@ -52,8 +81,7 @@ def train_rrdb_main(args):
         'weight_decay': args.weight_decay
     }
     
-    # Build scheduler_cfg based on args.scheduler_type
-    scheduler_cfg = {'type': args.scheduler_type.lower()} # Ensure type is lowercase
+    scheduler_cfg = {'type': args.scheduler_type.lower()}
     if args.scheduler_type.lower() == 'steplr':
         scheduler_cfg['step_lr_step_size'] = args.step_lr_step_size
         scheduler_cfg['step_lr_gamma'] = args.step_lr_gamma
@@ -68,7 +96,7 @@ def train_rrdb_main(args):
         scheduler_cfg['plateau_mode'] = args.plateau_mode
         scheduler_cfg['plateau_factor'] = args.plateau_factor
         scheduler_cfg['plateau_patience'] = args.plateau_patience
-        scheduler_cfg['plateau_verbose'] = True # Or make this an arg
+        scheduler_cfg['plateau_verbose'] = True 
 
     logging_cfg = {
         'exp_name': args.exp_name,
@@ -85,66 +113,66 @@ def train_rrdb_main(args):
         device=device
     )
 
-    print("\nStarting RRDBNet training process...")
+    print("\nStarting RRDBNet training process...") # write message on console
     try:
         rrdb_trainer.train(
             train_loader=train_loader,
             epochs=args.epochs,
+            val_loader=val_loader,                  # Pass validation loader
+            val_every_n_epochs=args.val_every_n_epochs, # Pass validation frequency
             accumulation_steps=args.accumulation_steps,
             log_dir_param=args.continue_log_dir,
             checkpoint_dir_param=args.continue_checkpoint_dir,
             resume_checkpoint_path=args.weights_path,
-            save_every_n_epochs=args.save_every_n_epochs
+            save_every_n_epochs=args.save_every_n_epochs,
+            predict_residual=args.predict_residual
         )
     except Exception as train_error:
-        print(f"\nERROR occurred during RRDBNet training: {train_error}")
+        print(f"\nERROR occurred during RRDBNet training: {train_error}") # write message on console
+        import traceback
+        traceback.print_exc()
         raise 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train RRDBNet Model with Advanced Schedulers")
+    parser = argparse.ArgumentParser(description="Train RRDBNet Model with Advanced Schedulers and Validation")
     
     # Dataset and Model args
-    parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/images160x160", help='Path to the image folder for HR images')
+    parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/images160x160/", help='Path to the image folder for HR images')
+    parser.add_argument('--val_image_folder', type=str, default=None, help='Path to the validation image folder for HR images (optional)')
     parser.add_argument('--img_size', type=int, default=160, help='Target HR image size')
     parser.add_argument('--img_channels', type=int, default=3, help='Number of image channels')
     parser.add_argument('--downscale_factor', type=int, default=4, help='Factor to downscale HR to get LR (determines sr_scale)')
     
     parser.add_argument('--rrdb_num_feat', type=int, default=64, help='Number of features (nf) in RRDBNet')
-    parser.add_argument('--rrdb_num_block', type=int, default=8, help='Number of RRDB blocks (nb) in RRDBNet')
+    parser.add_argument('--rrdb_num_block', type=int, default=17, help='Number of RRDB blocks (nb) in RRDBNet')
     parser.add_argument('--rrdb_gc', type=int, default=32, help='Growth channel (gc) in RRDBNet')
     
     # Training args
     parser.add_argument('--device', type=str, default='cuda:1', help='Device to train on (e.g., cuda, cpu)')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=64, help='Training batch size')
+    parser.add_argument('--val_batch_size', type=int, default=64, help='Validation batch size')
+    parser.add_argument('--val_every_n_epochs', type=int, default=1, help='Frequency (in epochs) to run validation')
     parser.add_argument('--accumulation_steps', type=int, default=4, help='Gradient accumulation steps')
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Optimizer learning rate')
     parser.add_argument('--adam_beta1', type=float, default=0.9, help='Adam optimizer beta1')
     parser.add_argument('--adam_beta2', type=float, default=0.999, help='Adam optimizer beta2')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='Optimizer weight decay')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader worker processes')
-    parser.add_argument('--predict_residual', action='store_true', help='Predict residual instead of full image')
+    parser.add_argument('--predict_residual', action='store_true', help='Train RRDBNet to predict residual instead of full image')
 
     # Scheduler args
     parser.add_argument('--scheduler_type', type=str, default='CosineAnnealingLR', 
                         choices=['none', 'StepLR', 'CosineAnnealingLR', 'CosineAnnealingWarmRestarts', 'ReduceLROnPlateau'],
                         help='Type of LR scheduler to use.')
-    
-    # StepLR specific args
     parser.add_argument('--step_lr_step_size', type=int, default=200000, help='StepLR: decay LR every N optimizer steps')
     parser.add_argument('--step_lr_gamma', type=float, default=0.5, help='StepLR: LR decay factor')
-    
-    # CosineAnnealingLR specific args
     parser.add_argument('--cosine_t_max', type=int, default=None, help='CosineAnnealingLR: T_max in epochs (defaults to total epochs if None)')
     parser.add_argument('--cosine_eta_min', type=float, default=0.0, help='CosineAnnealingLR: minimum learning rate')
-    
-    # CosineAnnealingWarmRestarts specific args
     parser.add_argument('--cosine_warm_t_0', type=int, default=10, help='CosineAnnealingWarmRestarts: Number of epochs for the first restart')
     parser.add_argument('--cosine_warm_t_mult', type=int, default=1, help='CosineAnnealingWarmRestarts: Factor to increase T_i after a restart')
     parser.add_argument('--cosine_warm_eta_min', type=float, default=0.0, help='CosineAnnealingWarmRestarts: minimum learning rate')
-
-    # ReduceLROnPlateau specific args
-    parser.add_argument('--plateau_mode', type=str, default='min', choices=['min', 'max'], help='ReduceLROnPlateau: mode (min or max)')
+    parser.add_argument('--plateau_mode', type=str, default='min', choices=['min', 'max'], help='ReduceLROnPlateau: mode')
     parser.add_argument('--plateau_factor', type=float, default=0.1, help='ReduceLROnPlateau: factor by which LR is reduced')
     parser.add_argument('--plateau_patience', type=int, default=10, help='ReduceLROnPlateau: number of epochs with no improvement')
     
@@ -155,17 +183,17 @@ if __name__ == "__main__":
     parser.add_argument('--continue_log_dir', type=str, default=None, help='Specific directory to continue logging')
     parser.add_argument('--continue_checkpoint_dir', type=str, default=None, help='Specific directory to continue saving checkpoints')
     parser.add_argument('--weights_path', type=str, default=None, help='Path to pre-trained model weights to resume training')
-    parser.add_argument('--save_every_n_epochs', type=int, default=5, help='Save checkpoint every N epochs')
+    parser.add_argument('--save_every_n_epochs', type=int, default=5, help='Save checkpoint every N epochs (non-best model)')
 
     args = parser.parse_args()
 
     # --- Print Configuration ---
-    print(f"--- RRDBNet Training Configuration ---")
+    print(f"--- RRDBNet Training Configuration ---") # write message on console
     for arg_name, arg_val in vars(args).items():
-        print(f"  {arg_name}: {arg_val}")
-    print(f"  SR Scale (from downscale_factor): {args.downscale_factor}")
+        print(f"  {arg_name}: {arg_val}") # write message on console
+    print(f"  SR Scale (from downscale_factor): {args.downscale_factor}") # write message on console
     if args.scheduler_type.lower() == 'cosineannealinglr' and args.cosine_t_max is None:
-        print(f"  CosineAnnealingLR T_max will default to total epochs: {args.epochs}")
-    print(f"------------------------------------")
+        print(f"  CosineAnnealingLR T_max will default to total epochs: {args.epochs}") # write message on console
+    print(f"------------------------------------") # write message on console
 
     train_rrdb_main(args)

@@ -138,7 +138,7 @@ if __name__ == "__main__":
                         help='Directory containing original high-resolution images (assumed to be at target img_size).')
     parser.add_argument('--output_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/images160x160/processed',
                         help='Directory to save preprocessed PyTorch tensors (.pt files).')
-    parser.add_argument('--rrdb_weights_path', type=str, default='/home/hoangdv/cv_project/checkpoints_rrdb/rrdb_17_05_16/rrdb_model_best.pth',
+    parser.add_argument('--rrdb_weights_path', type=str, default='/home/hoangdv/cv_project/checkpoints_rrdb/basic_rrdb_20250520-002155/rrdb_model_best.pth',
                         help='Path to pre-trained RRDBNet weights (.pth file).')
 
     parser.add_argument('--img_size', type=int, default=160,
@@ -155,7 +155,7 @@ if __name__ == "__main__":
                         help='Number of RRDB blocks (nb) in RRDBNet.')
     parser.add_argument('--rrdb_gc', type=int, default=32,
                         help='Growth channel (gc) in RRDBNet.')
-    parser.add_argument('--batch_size', type=int, default=8, # New argument for batch size
+    parser.add_argument('--batch_size', type=int, default=128, # New argument for batch size
                         help='Number of images to process in a batch for RRDBNet inference.')
 
     parser.add_argument('--device', type=str, default='cuda:0',
