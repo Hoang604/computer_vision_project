@@ -325,6 +325,24 @@ class DiffusionTrainer:
             
             torch.save(checkpoint_data, best_checkpoint_path)
             print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Val Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})") # write message on console
+        try:
+            print(f"Saving model at epoch {epoch + 1}")
+            checkpoint_data2 = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': mean_train_loss, # Store best val loss
+                'train_loss_epoch': mean_train_loss, 
+                'global_optimizer_steps': global_step_optimizer,
+                'mode': self.mode
+            }
+            if scheduler:
+                checkpoint_data2['scheduler_state_dict'] = scheduler.state_dict()
+            checkpoint_train_path = os.path.join(os.path.dirname(best_checkpoint_path), f'diffusion_model_epoch_{epoch + 1}.pth')
+            torch.save(checkpoint_data2, checkpoint_train_path)
+        except Exception as e:
+            print(f"Error saving train best loss checkpoint: {e}")
+            pass
 
         if scheduler:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -337,7 +355,7 @@ class DiffusionTrainer:
                 scheduler.step() 
                 print(f"Epoch-based scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") # write message on console
         
-        if (epoch + 1) % 5 == 0 and dataset_for_samples is not None: # Generate samples every 5 epochs
+        if dataset_for_samples is not None: # Generate samples
             try:
                 self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor)
             except Exception as e_sample:
@@ -368,7 +386,8 @@ class DiffusionTrainer:
         sample_images_data = [] # List to store image data for logging
         # Get a few samples from the dataset to generate images
         num_samples_to_generate = min(3, len(dataset.dataset) if hasattr(dataset, 'dataset') else 3) # Generate a few samples
-        if num_samples_to_generate == 0:
+        if num_samples_to_generate == 0:        # saved_best_this_epoch = False # Not strictly needed anymore if we only save best
+
             print("Warning: Dataset is empty or too small. Skipping sample generation.") # Log warning
             return
 
@@ -387,11 +406,12 @@ class DiffusionTrainer:
             original_img_cpu = original_b[0].cpu().numpy() # Original HR image (CPU, numpy)
             residual_img_for_recon = residual_b_cpu[0].unsqueeze(0).to(self.device) # Ground truth residual
 
+            _, features = context_extractor(low_res_img, get_fea=True) # Extract features from low-res image
+
             # Generate residual using the generator, now passing context_extractor
             generated_residual = generator.generate_residuals(
                 model=model,
-                low_resolution_image=low_res_img,
-                context_extractor=context_extractor, # Pass the context_extractor
+                features=features,
                 num_images=1
             )
             reconstructed_image = up_scale_img + generated_residual # Reconstruct HR image
@@ -436,7 +456,6 @@ class DiffusionTrainer:
                 epochs=100,
                 start_epoch=0,
                 best_loss=float('inf'), 
-                context_selection_mode="LR", 
                 log_dir_param=None,
                 checkpoint_dir_param=None,
                 log_dir_base="/media/hoangdv/cv_logs_diffusion",
@@ -676,6 +695,7 @@ class DiffusionTrainer:
             # global_optimizer_steps = 0 # Reset
 
         return start_epoch, loaded_loss
+
 
 class ResidualGenerator:
     """

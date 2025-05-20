@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import make_grid # Import for image logging
 from tqdm import tqdm
 import os
 import datetime
@@ -33,11 +34,8 @@ class BasicRRDBNetTrainer:
         self.global_step_optimizer = 0
         self.batch_step_counter = 0
         
-        # Variables for best model saving
-        # self.best_loss will track the best validation loss if val_loader is provided,
-        # otherwise it will track the best training loss.
         self.best_loss = float('inf') 
-        self.best_checkpoint_path = None # Will be set in _setup_logging_and_checkpointing
+        self.best_checkpoint_path = None 
 
         self.writer = None
         self.checkpoint_dir = None
@@ -72,7 +70,7 @@ class BasicRRDBNetTrainer:
         return optimizer
 
     def _build_scheduler(self, optimizer_to_schedule):
-        scheduler_type = self.scheduler_config.get('type', 'none').lower() # Ensure case-insensitivity
+        scheduler_type = self.scheduler_config.get('type', 'none').lower() 
         
         if scheduler_type == 'none':
             print("No learning rate scheduler will be used.") # write message on console
@@ -80,22 +78,22 @@ class BasicRRDBNetTrainer:
         
         print(f"Building scheduler of type: {scheduler_type}") # write message on console
         if scheduler_type == 'steplr':
-            step_size = self.scheduler_config.get('step_lr_step_size', 200000) # Number of optimizer steps
+            step_size = self.scheduler_config.get('step_lr_step_size', 200000) 
             gamma = self.scheduler_config.get('step_lr_gamma', 0.5)
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer_to_schedule,
                                                         step_size=step_size, 
                                                         gamma=gamma)
             print(f"  StepLR configured with step_size={step_size}, gamma={gamma}") # write message on console
         elif scheduler_type == 'cosineannealinglr':
-            t_max = self.scheduler_config.get('cosine_t_max', 100) # Typically total epochs
+            t_max = self.scheduler_config.get('cosine_t_max', 100) 
             eta_min = self.scheduler_config.get('cosine_eta_min', 0.0)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_to_schedule, 
                                                                     T_max=t_max, 
                                                                     eta_min=eta_min)
             print(f"  CosineAnnealingLR configured with T_max={t_max}, eta_min={eta_min}") # write message on console
         elif scheduler_type == 'cosineannealingwarmrestarts':
-            t_0 = self.scheduler_config.get('cosine_warm_t_0', 10) # Number of epochs for the first restart
-            t_mult = self.scheduler_config.get('cosine_warm_t_mult', 1) # Factor to increase T_i after a restart
+            t_0 = self.scheduler_config.get('cosine_warm_t_0', 10) 
+            t_mult = self.scheduler_config.get('cosine_warm_t_mult', 1) 
             eta_min = self.scheduler_config.get('cosine_warm_eta_min', 0.0)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_to_schedule,
                                                                              T_0=t_0,
@@ -105,7 +103,7 @@ class BasicRRDBNetTrainer:
         elif scheduler_type == 'reducelronplateau':
             mode = self.scheduler_config.get('plateau_mode', 'min')
             factor = self.scheduler_config.get('plateau_factor', 0.1)
-            patience = self.scheduler_config.get('plateau_patience', 10) # Epochs
+            patience = self.scheduler_config.get('plateau_patience', 10) 
             verbose = self.scheduler_config.get('plateau_verbose', True)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_to_schedule,
                                                                    mode=mode,
@@ -123,9 +121,6 @@ class BasicRRDBNetTrainer:
         if self.logging_config.get('exp_name') is not None:
             exp_name = self.logging_config['exp_name']
         else:
-            # Include 'val' in exp_name if validation is implicitly part of this setup,
-            # or handle it based on whether val_loader will be used.
-            # For now, keeping it generic.
             exp_name = f'basic_rrdb_{timestamp}' 
         
         log_dir_base = self.logging_config.get('log_dir_base', 'logs_rrdb_basic_standalone')
@@ -138,8 +133,6 @@ class BasicRRDBNetTrainer:
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         
         self.writer = SummaryWriter(self.log_dir)
-        # This path will store the model with the best observed loss 
-        # (validation loss if val_loader is used, otherwise training loss)
         self.best_checkpoint_path = os.path.join(self.checkpoint_dir, 'rrdb_model_best.pth') 
         
         print(f"Basic RRDBNet (Standalone) - Logging to: {self.log_dir}") # write message on console
@@ -147,13 +140,10 @@ class BasicRRDBNetTrainer:
         print(f"Basic RRDBNet (Standalone) - Best model will be saved to: {self.best_checkpoint_path}") # write message on console
 
     def _perform_one_batch_step(self, batch_data, predict_residual=False, is_training=True):
-        # Unpack batch data: (low_res, upscaled_bicubic, original_hr, original_residual)
-        # For RRDBNet direct training, we mainly use img_lr and (img_hr or img_res)
         img_lr, _, img_hr, img_res = batch_data 
-        
-        img_lr = img_lr.to(self.device) # Move LR to device
+        img_lr = img_lr.to(self.device)
 
-        with torch.set_grad_enabled(is_training): # Enable or disable gradients based on mode
+        with torch.set_grad_enabled(is_training): 
             predicted_output = self.model(img_lr) 
             
             if predict_residual:
@@ -164,16 +154,15 @@ class BasicRRDBNetTrainer:
                 loss = F.l1_loss(predicted_output, target) 
         return loss
 
-
     def _run_validation_epoch(self, val_loader: DataLoader, epoch: int, predict_residual: bool):
-        self.model.eval() # Set model to evaluation mode
+        self.model.eval() 
         total_val_loss = 0.0
         num_val_batches = 0
         
         print(f"\nRunning validation for RRDBNet epoch {epoch+1}...") # write message on console
         progress_bar_val = tqdm(total=len(val_loader), desc=f"Validation RRDBNet Epoch {epoch+1}")
 
-        with torch.no_grad(): # Ensure no gradients are computed during validation
+        with torch.no_grad(): 
             for batch_idx, batch_data in enumerate(val_loader):
                 loss = self._perform_one_batch_step(batch_data, predict_residual=predict_residual, is_training=False)
                 total_val_loss += loss.item()
@@ -190,11 +179,92 @@ class BasicRRDBNetTrainer:
             
         return avg_val_loss
 
+    def _log_rrdb_sample_images(self, 
+                               train_loader: DataLoader, 
+                               val_loader: DataLoader = None, # Added val_loader
+                               epoch: int = 0, 
+                               predict_residual: bool = False, 
+                               num_samples=4):
+        """
+        Logs a grid of sample images (LR, HR/Residual Target, HR/Residual Predicted) to TensorBoard.
+        Prioritizes val_loader for samples if available.
+        """
+        self.model.eval() # Set model to evaluation mode for consistent output
+        
+        data_loader_for_samples = None
+        source_name = ""
+
+        if val_loader:
+            try:
+                # Check if val_loader has data
+                _ = next(iter(val_loader)) # Try to get one item
+                data_loader_for_samples = val_loader
+                source_name = "Validation"
+            except StopIteration:
+                print("Warning: val_loader is empty. Falling back to train_loader for image logging.") # write message on console
+                data_loader_for_samples = train_loader
+                source_name = "Training"
+            except Exception as e: # Catch other potential errors with val_loader
+                print(f"Warning: Error with val_loader ({e}). Falling back to train_loader for image logging.") # write message on console
+                data_loader_for_samples = train_loader
+                source_name = "Training"
+        else:
+            data_loader_for_samples = train_loader
+            source_name = "Training"
+
+        if not data_loader_for_samples:
+            print("Warning: No data loader available for image logging.") # write message on console
+            self.model.train()
+            return
+
+        try:
+            sample_batch = next(iter(data_loader_for_samples))
+        except StopIteration:
+            print(f"Warning: Could not get a sample batch from {source_name} loader for image logging.") # write message on console
+            self.model.train() 
+            return
+
+        img_lr_batch, _, img_hr_batch, img_res_batch = sample_batch
+        
+        img_lr_sample = img_lr_batch[:num_samples].to(self.device)
+        
+        with torch.no_grad():
+            predicted_output_sample = self.model(img_lr_sample)
+
+        if predict_residual:
+            target_sample = img_res_batch[:num_samples].to(self.device)
+            target_name = "Target_Residual"
+            predicted_name = "Predicted_Residual"
+        else:
+            target_sample = img_hr_batch[:num_samples].to(self.device)
+            target_name = "Target_HR"
+            predicted_name = "Predicted_HR"
+
+        img_lr_log = (img_lr_sample.cpu() + 1.0) / 2.0
+        predicted_log = (predicted_output_sample.cpu() + 1.0) / 2.0
+        target_log = (target_sample.cpu() + 1.0) / 2.0
+        
+        img_lr_log = torch.clamp(img_lr_log, 0.0, 1.0)
+        predicted_log = torch.clamp(predicted_log, 0.0, 1.0)
+        target_log = torch.clamp(target_log, 0.0, 1.0)
+
+        grid_lr = make_grid(img_lr_log, nrow=num_samples)
+        grid_predicted = make_grid(predicted_log, nrow=num_samples)
+        grid_target = make_grid(target_log, nrow=num_samples)
+        
+        if self.writer:
+            self.writer.add_image(f'Samples_from_{source_name}/01_Input_LR', grid_lr, epoch + 1)
+            self.writer.add_image(f'Samples_from_{source_name}/02_{predicted_name}', grid_predicted, epoch + 1)
+            self.writer.add_image(f'Samples_from_{source_name}/03_{target_name}', grid_target, epoch + 1)
+            print(f"Logged sample RRDB images from {source_name} set to TensorBoard for epoch {epoch + 1}.") # write message on console
+        
+        self.model.train() 
+
     def train(self, 
               train_loader: DataLoader, 
               epochs: int, 
-              val_loader: DataLoader = None,       # New: Validation DataLoader
-              val_every_n_epochs: int = 1,       # New: Frequency of validation
+              val_loader: DataLoader = None,       
+              val_every_n_epochs: int = 1,       
               accumulation_steps: int = 1,
               log_dir_param: str = None, 
               checkpoint_dir_param: str = None, 
@@ -204,18 +274,12 @@ class BasicRRDBNetTrainer:
              ):
         
         self._setup_logging_and_checkpointing(log_dir_param, checkpoint_dir_param)
-        
-        # Initialize self.best_loss. If resuming, load_checkpoint_for_resume will update it.
-        # self.best_loss will store the best validation loss if val_loader is provided,
-        # otherwise it defaults to tracking the best training loss.
         initial_best_loss_from_resume = float('inf')
 
         if resume_checkpoint_path:
-            # load_checkpoint_for_resume now returns: start_epoch, global_step_optimizer, loaded_loss_metric
-            # where loaded_loss_metric is the 'loss' saved in the checkpoint (could be train or val).
             self.start_epoch, self.global_step_optimizer, initial_best_loss_from_resume = self.load_checkpoint_for_resume(resume_checkpoint_path)
-            self.best_loss = initial_best_loss_from_resume # Initialize best_loss with the loaded value
-            self.batch_step_counter = self.start_epoch * len(train_loader) # Approximate, better if saved in ckpt
+            self.best_loss = initial_best_loss_from_resume 
+            self.batch_step_counter = self.start_epoch * len(train_loader) 
         
         print(f"Starting BasicRRDBNet training from epoch {self.start_epoch + 1}/{epochs} on device: {self.device}") # write message on console
         print(f"Accumulation steps: {accumulation_steps}") # write message on console
@@ -226,13 +290,12 @@ class BasicRRDBNetTrainer:
             print("No validation loader provided. 'best_loss' will track training loss.") # write message on console
             print(f"Initial best training loss (from resume or inf): {self.best_loss:.6f}") # write message on console
 
-
         current_accumulation_idx = 0
         if self.start_epoch == 0: 
             self.optimizer.zero_grad()
 
         for epoch in range(self.start_epoch, epochs):
-            self.model.train() # Set model to training mode
+            self.model.train() 
             progress_bar = tqdm(total=len(train_loader), desc=f"Train RRDBNet Epoch {epoch+1}/{epochs}")
             epoch_total_train_loss = 0.0
             num_batches_in_epoch = 0
@@ -274,7 +337,6 @@ class BasicRRDBNetTrainer:
                 if self.optimizer.param_groups:
                     self.writer.add_scalar('Train/LearningRate_epoch_end', self.optimizer.param_groups[0]['lr'], epoch + 1)
 
-            # --- Validation Step ---
             current_loss_for_best_comparison = mean_train_loss_epoch
             is_current_loss_validation = False
 
@@ -283,8 +345,6 @@ class BasicRRDBNetTrainer:
                 current_loss_for_best_comparison = avg_val_loss_epoch
                 is_current_loss_validation = True
             
-            # --- Checkpoint Saving Logic ---
-            # Save best model based on validation loss if available, otherwise training loss
             if current_loss_for_best_comparison < self.best_loss:
                 self.best_loss = current_loss_for_best_comparison
                 self.save_checkpoint(epoch, self.best_loss, is_best_model=True, is_validation_loss=is_current_loss_validation)
@@ -295,24 +355,23 @@ class BasicRRDBNetTrainer:
                     log_msg += f"training loss: {self.best_loss:.4f}"
                 print(f"Epoch {epoch+1}: {log_msg} to {self.best_checkpoint_path}") # write message on console
             
-            # Save periodic checkpoint (not the best one)
             if (epoch + 1) % save_every_n_epochs == 0 or (epoch + 1) == epochs:
-                # Avoid re-saving if it was just saved as the best model
                 if not (current_loss_for_best_comparison == self.best_loss and self.best_checkpoint_path == os.path.join(self.checkpoint_dir, f'rrdb_model_epoch_{epoch+1}.pth')):
-                     self.save_checkpoint(epoch, mean_train_loss_epoch, is_best_model=False, is_validation_loss=False) # Save with train loss for periodic
+                     self.save_checkpoint(epoch, mean_train_loss_epoch, is_best_model=False, is_validation_loss=False)
 
-            # --- Scheduler Step (Epoch-based) ---
             if self.scheduler:
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    # Use validation loss if available and ReduceLROnPlateau is used, otherwise training loss
                     metric_for_plateau = current_loss_for_best_comparison if is_current_loss_validation else mean_train_loss_epoch
                     self.scheduler.step(metric_for_plateau)
                     print(f"ReduceLROnPlateau scheduler stepped with metric {metric_for_plateau:.4f}. New LR: {self.optimizer.param_groups[0]['lr']:.2e}") # write message on console
-                elif not isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR): # StepLR is handled per optimizer step
+                elif not isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR): 
                     self.scheduler.step()
                     print(f"Epoch-based scheduler ({type(self.scheduler).__name__}) stepped. New LR: {self.optimizer.param_groups[0]['lr']:.2e}") # write message on console
+            
+            if self.writer:
+                self._log_rrdb_sample_images(train_loader, val_loader, epoch, predict_residual)
 
-        # Final optimizer step for any remaining accumulated gradients
+
         if current_accumulation_idx > 0:
             print(f"Performing final optimizer step for {current_accumulation_idx} accumulated gradients...") # write message on console
             self.optimizer.step()
@@ -329,7 +388,6 @@ class BasicRRDBNetTrainer:
             print("(This was the best validation loss if validation was performed.)") # write message on console
         else:
             print("(This was the best training loss as no validation was performed.)") # write message on console
-
 
     def save_checkpoint(self, epoch, loss_value, is_best_model=False, is_validation_loss=False): 
         if not self.checkpoint_dir:
@@ -351,11 +409,11 @@ class BasicRRDBNetTrainer:
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
-            'loss': loss_value, # This is the loss that qualified this checkpoint (either train or val for best)
-            'is_validation_loss': is_validation_loss, # Indicates if 'loss' is a validation loss
+            'loss': loss_value, 
+            'is_validation_loss': is_validation_loss, 
             'global_step_optimizer': self.global_step_optimizer,
             'trainer_configs': trainer_configs_to_save,
-            'current_best_tracked_loss': self.best_loss # The overall best loss tracked by the trainer
+            'current_best_tracked_loss': self.best_loss 
         }
         torch.save(checkpoint_data, save_path)
         log_msg = f"Saved checkpoint to {save_path} (Epoch {epoch+1}, Loss in file: {loss_value:.4f}"
@@ -369,8 +427,6 @@ class BasicRRDBNetTrainer:
     def load_checkpoint_for_resume(self, checkpoint_path: str):
         start_epoch_res = 0
         global_step_optimizer_res = 0
-        # This will be the 'loss' stored in the checkpoint, which could be train or val
-        # if it was a 'best' checkpoint. Or it's the train loss for a periodic checkpoint.
         loaded_loss_metric_from_checkpoint = float('inf') 
 
         if not os.path.isfile(checkpoint_path):
@@ -384,7 +440,6 @@ class BasicRRDBNetTrainer:
             loaded_trainer_configs = checkpoint.get('trainer_configs')
             if loaded_trainer_configs:
                 print(f"Checkpoint was saved with trainer configs: {loaded_trainer_configs}") # write message on console
-                # Optional: Add detailed config comparison here if needed
                 if self.model_config != loaded_trainer_configs.get('model_config'):
                     print("WARNING: Model configuration in checkpoint differs from current trainer's model configuration.") # write message on console
 
@@ -412,15 +467,12 @@ class BasicRRDBNetTrainer:
             start_epoch_res = checkpoint.get('epoch', -1) + 1 
             global_step_optimizer_res = checkpoint.get('global_step_optimizer', 0)
             
-            # 'current_best_tracked_loss' is the value that self.best_loss should be initialized with.
-            # If it's not present, fall back to 'loss' from the checkpoint.
             loaded_loss_metric_from_checkpoint = checkpoint.get('current_best_tracked_loss', checkpoint.get('loss', float('inf')))
             
             print(f"Resuming training from epoch {start_epoch_res}, Optimizer steps: {global_step_optimizer_res}") # write message on console
             print(f"Loaded 'current_best_tracked_loss' (or 'loss') from checkpoint: {loaded_loss_metric_from_checkpoint:.4f}") # write message on console
             if 'is_validation_loss' in checkpoint:
                 print(f"  The 'loss' value in the loaded checkpoint was a {'validation' if checkpoint['is_validation_loss'] else 'training'} loss.") # write message on console
-
 
         except Exception as e:
             print(f"Error loading checkpoint for resume: {e}. Training will start from scratch.") # write message on console
@@ -465,7 +517,6 @@ class BasicRRDBNetTrainer:
         if 'model_state_dict' in checkpoint:
             state_dict_to_load = checkpoint['model_state_dict']
         elif isinstance(checkpoint, dict) and not any(k.startswith('optimizer') or k == 'epoch' or k == 'trainer_configs' for k in checkpoint.keys()):
-            # Heuristic: if it's a dict and doesn't look like a full trainer checkpoint, it might be just the state_dict
             state_dict_to_load = checkpoint 
         
         if state_dict_to_load:
