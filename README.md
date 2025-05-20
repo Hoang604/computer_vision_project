@@ -126,7 +126,7 @@ computer_vision_project/
 
 1.  **Clone the repository (if applicable):**
     ```bash
-    git clone <your-repo-url>
+    git clone https://github.com/Hoang604/computer_vision_project.git
     cd computer_vision_project
     ```
 
@@ -135,6 +135,12 @@ computer_vision_project/
     python -m venv venv
     source venv/bin/activate  # On Linux/macOS
     # venv\Scripts\activate    # On Windows
+    ```
+
+    **Alternatively, using Conda:**
+    ```bash
+    conda create -n myenv python=3.13
+    conda activate myenv
     ```
 
 3.  **Install dependencies:**
