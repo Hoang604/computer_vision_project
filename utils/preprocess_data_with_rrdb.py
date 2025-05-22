@@ -156,9 +156,9 @@ def preprocess_images_batched_single_rrdb(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Preprocess images with a single RRDBNet for Upscaling and Context Feature Extraction (Batched)")
-    parser.add_argument('--input_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/images160x160/train/bicubic/hr_original_images',
+    parser.add_argument('--input_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/160/train/bicubic/hr_original_images',
                         help='Directory containing original high-resolution images (assumed to be at target img_size).')
-    parser.add_argument('--output_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/images160x160/train/rrdb_single_model_processed',
+    parser.add_argument('--output_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/160/train/rrdb',
                         help='Directory to save preprocessed PyTorch tensors (.pt files), including features.')
 
     # Common image parameters

@@ -31,15 +31,15 @@ class ImageDataset(Dataset):
         self.upscale_image = upscale_function # Use the provided upscale function
 
         if not isinstance(self.downscale_factor, int) or self.downscale_factor < 1:
-            raise ValueError("downscale_factor must be an integer and >= 1.") # write message on console
+            raise ValueError("downscale_factor must be an integer and >= 1.") 
         if not isinstance(self.img_size, int) or self.img_size <= 0:
-            raise ValueError("img_size must be a positive integer.") # write message on console
+            raise ValueError("img_size must be a positive integer.") 
         if self.img_size % self.downscale_factor != 0:
             print(f"Warning: img_size ({self.img_size}) is not perfectly divisible by downscale_factor ({self.downscale_factor}). "
                   "This might lead to slight dimension mismatches if not handled carefully by the upscale_image function "
-                  "or require the safeguard resize.") # write message on console
+                  "or require the safeguard resize.") 
 
-        print(f"Found {self.original_len} images in {folder_path}. Target original_img_size: {img_size}x{img_size}, downscale_factor: {downscale_factor}. Image range: [-1, 1].") # write message on console
+        print(f"Found {self.original_len} images in {folder_path}. Target original_img_size: {img_size}x{img_size}, downscale_factor: {downscale_factor}. Image range: [-1, 1].") 
 
     def __len__(self):
         """ Returns the total size of the dataset (original + flipped). """
@@ -104,7 +104,7 @@ class ImageDataset(Dataset):
                 raise ValueError(
                     f"Calculated low_res dimension is zero ({low_res_h}x{low_res_w}) for img_size={self.img_size} "
                     f"and downscale_factor={self.downscale_factor}. Adjust parameters."
-                ) # write message on console
+                ) 
 
             # Create low-resolution image by downscaling the 'original_image_resized'
             # Output is Tensor (C, low_res_h, low_res_w), range [-1,1]
@@ -129,10 +129,10 @@ class ImageDataset(Dataset):
             )
 
             if returned_upscaled_image_hwc_0_1 is None:
-                raise RuntimeError(f"The 'upscale_image' function returned None for image: {img_path}") # write message on console
+                raise RuntimeError(f"The 'upscale_image' function returned None for image: {img_path}") 
 
             if not isinstance(returned_upscaled_image_hwc_0_1, torch.Tensor):
-                # write message on console
+                
                 print(f"Warning: upscale_image was expected to return a Tensor but returned {type(returned_upscaled_image_hwc_0_1)}. Attempting conversion.")
                 if isinstance(returned_upscaled_image_hwc_0_1, np.ndarray):
                     # Assuming np.ndarray is in [0,1] range if upscale_image was supposed to return that
@@ -150,7 +150,7 @@ class ImageDataset(Dataset):
 
             # Ensure the upscaled image tensor matches the dimensions of original_image_resized.
             if upscaled_image_tensor.shape[1:] != original_image_resized.shape[1:]:
-                # write message on console
+                
                 # print(f"Warning: Dimensions of upscaled image ({upscaled_image_tensor.shape[1:]}) "
                 #       f"do not match original_image_resized ({original_image_resized.shape[1:]}) for {img_path}. Resizing upscaled image.")
                 upscaled_image_tensor = TF.resize(
@@ -168,7 +168,7 @@ class ImageDataset(Dataset):
             return low_res_image, upscaled_image_tensor, original_image_resized, residual_image
 
         except Exception as e:
-            # write message on console
+            
             print(f"Error loading or processing image at index {idx} (original file: {self.image_files[original_idx]}): {e}")
             # Fallback: return dummy tensors of expected shapes and ranges.
             dummy_c = 3
@@ -225,18 +225,18 @@ class ImageDatasetRRDB(Dataset):
         )
 
         if not self.tensor_files_basenames:
-            raise ValueError(f"No .pt files found in {self.path_lr}. Ensure preprocessing was successful.") # write message on console
+            raise ValueError(f"No .pt files found in {self.path_lr}. Ensure preprocessing was successful.") 
 
         self.num_original_samples = len(self.tensor_files_basenames)
         self.img_size = img_size
         self.downscale_factor = downscale_factor
         self.apply_hflip = apply_hflip
 
-        print(f"ImageDatasetRRDB: Found {self.num_original_samples} preprocessed tensor sets in {preprocessed_folder_path}.") # write message on console
+        print(f"ImageDatasetRRDB: Found {self.num_original_samples} preprocessed tensor sets in {preprocessed_folder_path}.") 
         if self.apply_hflip:
-            print("Horizontal flipping augmentation is ENABLED.") # write message on console
+            print("Horizontal flipping augmentation is ENABLED.") 
         else:
-            print("Horizontal flipping augmentation is DISABLED.") # write message on console
+            print("Horizontal flipping augmentation is DISABLED.") 
 
     def __len__(self):
         return self.num_original_samples * 2 if self.apply_hflip else self.num_original_samples
@@ -280,7 +280,7 @@ class ImageDatasetRRDB(Dataset):
             # --- Verification (optional but good for debugging) ---
             if original_hr_image.shape[1] != self.img_size or original_hr_image.shape[2] != self.img_size:
                 print(f"Warning: Loaded original_hr_image for {base_filename_pt} has shape {original_hr_image.shape} "
-                      f"but expected H/W of {self.img_size}.") # write message on console
+                      f"but expected H/W of {self.img_size}.") 
             # Add more verification for LR, upscaled_rrdb, and features if needed
 
             # Apply horizontal flip if needed
@@ -298,9 +298,9 @@ class ImageDatasetRRDB(Dataset):
             return low_res_image, upscaled_image_rrdb, original_hr_image, residual_image, lr_features_list
 
         except FileNotFoundError as fnf_err:
-            print(f"Error: Preprocessed file not found for {base_filename_pt} at index {idx}. {fnf_err}") # write message on console
+            print(f"Error: Preprocessed file not found for {base_filename_pt} at index {idx}. {fnf_err}") 
         except Exception as e:
-            print(f"Error loading or processing tensor/features for {base_filename_pt} at index {idx}: {e}") # write message on console
+            print(f"Error loading or processing tensor/features for {base_filename_pt} at index {idx}: {e}") 
             import traceback
             traceback.print_exc() # Print full traceback for debugging
 
@@ -319,5 +319,5 @@ class ImageDatasetRRDB(Dataset):
         # The U-Net's handling of this dummy feature list would need to be robust.
         _dummy_lr_features = [torch.zeros(1, 1, 1)] # Placeholder, might cause issues if U-Net expects specific shapes/lengths
 
-        print(f"Warning: Returning dummy data for index {idx} due to previous error.") # write message on console
+        print(f"Warning: Returning dummy data for index {idx} due to previous error.") 
         return _dummy_low_res, _dummy_upscaled_rrdb, _dummy_original_hr, _dummy_residual, _dummy_lr_features

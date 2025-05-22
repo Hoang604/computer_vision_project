@@ -160,10 +160,10 @@ def train_diffusion(args):
             checkpoint_dir_base=args.base_checkpoint_dir
         )
     except Exception as train_error:
-        print(f"\nERROR occurred during training: {train_error}") # Log training error
+        print(f"\nERROR occurred during training: {train_error}")
         import traceback
         traceback.print_exc()
-        print("This might be due to issues like CUDA memory, shape mismatches, or data loading.") # Helpful message
+        print("This might be due to issues like CUDA memory, shape mismatches, or data loading.")
         raise
 
 # --- Script Entry Point ---
@@ -172,10 +172,10 @@ if __name__ == "__main__":
     
     # Dataset args
     parser.add_argument('--preprocessed_data_folder', type=str, 
-                        default='/media/tuannl1/heavy_weight/data/cv_data/images160x160/processed_val/train',
+                        default='/media/tuannl1/heavy_weight/data/cv_data/160/train/rrdb',
                         help='Path to the folder containing preprocessed tensors (.pt files from preprocess_data_with_rrdb.py).')
     parser.add_argument('--val_preprocessed_data_folder', type=str, 
-                        default='/media/tuannl1/heavy_weight/data/cv_data/images160x160/processed_val/validation', # New
+                        default='/media/tuannl1/heavy_weight/data/cv_data/160/validation/rrdb',
                         help='Path to the folder containing preprocessed validation tensors (optional).')
 
     parser.add_argument('--img_size', type=int, default=160,
