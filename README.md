@@ -19,104 +19,117 @@ The project provides scripts for data preprocessing, model training, and inferen
     * Standalone RRDBNet for SR.
     * Diffusion model refining Bicubic upscaling (conditioned by RRDBNet features).
     * Diffusion model refining RRDBNet upscaling (conditioned by RRDBNet features).
-* **Modular Design**: Separate scripts for training, inference, and preprocessing.
+* **Modular Design**: Code is organized into `src/` for core modules (data handling, model definitions, trainers) and `scripts/` for executable workflows (training, inference, preprocessing).
 * **Flexible Training**:
     * Train RRDBNet for direct SR or residual prediction.
     * Train U-Net (Diffusion Model) to predict noise or 'v_prediction' for different residual targets.
     * Support for resuming training from checkpoints.
     * Configurable learning rate schedulers.
 * **Data Handling**:
-    * `ImageDataset`: For general image loading, creating LR, Bicubic upscaled, and residual (HR - Bicubic) images on-the-fly.
-    * `ImageDatasetRRDB`: For loading preprocessed data, including LR images, HR images, RRDB-upscaled images, and extracted LR features.
-    * Preprocessing scripts to generate datasets for different training pipelines.
-* **Inference Scripts**: Ready-to-use scripts to apply trained models to new images.
+    * `ImageDataset` (`src/data_handling/dataset.py`): For general image loading, creating LR, Bicubic upscaled, and residual (HR - Bicubic) images on-the-fly.
+    * `ImageDatasetRRDB` (`src/data_handling/dataset.py`): For loading preprocessed data, including LR images, HR images, RRDB-upscaled images, and (if preprocessed) extracted LR features.
+    * Preprocessing scripts in `src/data_handling/` to generate datasets for different training pipelines.
+* **Inference Scripts**: Ready-to-use scripts in `scripts/` to apply trained models to new images.
 * **TensorBoard Logging**: Integrated for monitoring training progress.
 
 ## Implemented Models and Techniques
 
-1.  **Bicubic Interpolation (`bicubic.py`)**
+1.  **Bicubic Interpolation (`src/utils/bicubic.py`)**
     * A standard interpolation algorithm used for baseline comparison and as an initial upscaling step in some pipelines.
     * The `upscale_image` function provides flexible input/output handling.
 
-2.  **RRDBNet (`diffusion_modules.py`, `rrdb_trainer.py`, `train_rrdb.py`, `rrdb_infer.py`)**
-    * Architecture: Based on Residual-in-Residual Dense Blocks.
-    * Training (`train_rrdb.py`): Can be trained to directly predict the HR image or to predict the residual (HR - Bicubic upscaled LR).
-    * Inference (`rrdb_infer.py`): Applies a trained RRDBNet for super-resolution.
+2.  **RRDBNet (`src/diffusion_modules/rrdb.py`, `src/trainers/rrdb_trainer.py`, `scripts/train_rrdb.py`, `scripts/rrdb_infer.py`)**
+    * Architecture (`src/diffusion_modules/rrdb.py`): Based on Residual-in-Residual Dense Blocks.
+    * Training Logic (`src/trainers/rrdb_trainer.py`): Defines the `BasicRRDBNetTrainer` class.
+    * Main Training Script (`scripts/train_rrdb.py`): Uses `BasicRRDBNetTrainer` to train RRDBNet. Can be trained to directly predict the HR image or to predict the residual (HR - Bicubic upscaled LR).
+    * Inference (`scripts/rrdb_infer.py`): Applies a trained RRDBNet for super-resolution.
     * Role: Can act as a standalone SR model, a base SR model for diffusion refinement, or a feature extractor for conditioning diffusion models.
 
 3.  **Diffusion Models (U-Net based on DDPM/DDIM)**
-    * Core Architecture (`diffusion_modules.py`): A U-Net model with optional attention mechanisms and ResNet blocks, conditioned on features.
-    * Training Logic (`diffusion_trainer.py`):
+    * Core U-Net Architecture (`src/diffusion_modules/unet.py`): A U-Net model with optional attention mechanisms (`src/diffusion_modules/attention_block.py`) and ResNet blocks, conditioned on features. Other components like `SinusoidalPosEmb` are in `src/utils/network_comopents.py`.
+    * Training Logic (`src/trainers/diffusion_trainer.py`): Defines the `DiffusionTrainer` class.
         * `DiffusionTrainer`: Handles the DDPM/DDIM training loop, supporting "noise" and "v_prediction" modes.
-        * `ResidualGenerator`: Used during inference (sampling) with a DDIM scheduler.
+        * `ResidualGenerator` (within `src/trainers/diffusion_trainer.py`): Used during inference (sampling) with a DDIM scheduler.
     * **Pipeline 1: Refining Bicubic Upscaling**
-        * Training (`train_diffusion.py`):
+        * Training (`scripts/train_diffusion.py`):
             * The U-Net learns to predict the residual (HR - Bicubic upscaled LR) or the noise to reverse the noising of this residual.
-            * Conditioned on features extracted by an RRDBNet from the LR image.
-            * Uses `ImageDataset` for on-the-fly data generation.
-        * Inference (`diffusion_infer.py`):
-            * Takes an LR image, uses RRDBNet for feature extraction and initial Bicubic upscaling (implicitly, as the model was trained on this residual).
-            * U-Net predicts the residual, which is added to the Bicubic upscaled image.
-            * *(Note: The provided `diffusion_infer.py` seems to use RRDBNet for the base upscaling and then adds the diffusion residual. This might be a slight deviation from a pure "refining Bicubic" setup if the RRDBNet is powerful. The training in `train_diffusion.py` prepares residuals against Bicubic.)*
+            * Conditioned on features extracted by an RRDBNet from the LR image (on-the-fly).
+            * Uses `ImageDataset` for on-the-fly data generation (LR, Bicubic HR, HR - Bicubic residual).
+        * Inference:
+            * The provided `scripts/diffusion_infer.py` is primarily set up for Pipeline 2 (refining RRDBNet outputs using `ImageDatasetRRDB`).
+            * To perform inference for a model trained by `scripts/train_diffusion.py` (i.e., refining Bicubic on-the-fly), you would need to:
+                * Adapt `scripts/diffusion_infer.py` to take an LR image, perform Bicubic upscaling, extract RRDBNet features from LR, and then use the U-Net to predict and add the residual to the Bicubic upscaled image.
+                * Alternatively, modify a script like `scripts/rrdb_infer.py` to also load the U-Net and apply the diffusion-based refinement after Bicubic upscaling.
     * **Pipeline 2: Refining RRDBNet Upscaling (Predicting RRDB Residual)**
-        * Data Preprocessing (`utils/preprocess_data_with_rrdb.py`):
-            * Generates a dataset where each sample includes: LR image, HR image, HR image upscaled by a base RRDBNet, and features extracted from the LR image by a context RRDBNet.
-        * Training (`train_diffusion_predict_rrdb_residual.py`):
+        * Data Preprocessing (`src/data_handling/preprocess_data_with_rrdb.py`):
+            * Generates a dataset where each sample includes: LR image, HR image, HR image upscaled by a base RRDBNet. Note: The current `preprocess_data_with_rrdb.py` script in your upload (`preprocess_images_batched_rrdb_no_features`) saves LR, HR original, and HR_RRDB_upscaled, but *does not* pre-save LR features. LR features are extracted on-the-fly by the `context_extractor_model` during training with `scripts/train_diffusion_predict_rrdb_residual.py` and inference with `scripts/diffusion_infer.py`.
+        * Training (`scripts/train_diffusion_predict_rrdb_residual.py`):
             * The U-Net learns to predict the residual (True HR - RRDB-upscaled HR) or the noise to reverse the noising of this residual.
-            * Conditioned on features extracted by an RRDBNet (context extractor) from the LR image.
-            * Uses `ImageDatasetRRDB` to load preprocessed data.
-        * Inference (`diffusion_infer_with_rrdb_residual.py`):
-            * Takes an LR image.
-            * A base RRDBNet generates an initial HR image.
-            * A context RRDBNet extracts features from the LR image.
+            * Conditioned on features extracted on-the-fly by a context RRDBNet from the LR image.
+            * Uses `ImageDatasetRRDB` to load preprocessed data (LR, HR_RRDB_upscaled, HR_Original).
+        * Inference (`scripts/diffusion_infer.py`):
+            * This script is suited for this pipeline.
+            * It loads preprocessed data (LR, HR_RRDB_upscaled, etc.) using `ImageDatasetRRDB`.
+            * An RRDBNet (context extractor) extracts features from the LR image on-the-fly.
             * The U-Net, conditioned on these features, predicts the residual.
-            * This predicted residual is added to the base RRDBNet's HR output for refinement.
+            * This predicted residual is added to the RRDB-upscaled image (loaded as `up_lr_img` which is actually `hr_rrdb_upscaled` from the dataset).
 
-## Directory Structure (Key Files & Expected User-Created Directories)
+## Directory Structure
 
 ```
 computer_vision_project/
 │
 ├── data/                             # (User-created) Root directory for raw HR images
-│   └── my_hr_images/                 # (User-created) Example subdirectory with HR images
+│   └── my_hr_images/                 # (User-created) Example subdirectory with HR images (e.g., for train, validation)
 │
 ├── preprocessed_data/                # (Auto-generated by preprocessing scripts)
-│   ├── train/                        # Example for training split
+│   ├── bicubic_processed_train/      # Example output from preprocess_data_with_bicubic.py
 │   │   ├── hr_original/              # Stores original HR images as .pt
 │   │   ├── lr/                       # Stores LR images as .pt
-│   │   ├── hr_rrdb_upscaled/         # Stores HR images upscaled by RRDBNet (from preprocess_data_with_rrdb.py) as .pt
-│   │   └── lr_features/              # Stores extracted LR features as .pt (list of tensors)
-│   └── validation/                   # Example for validation split (similar structure)
+│   │   └── hr_bicubic_upscaled/      # Stores HR images upscaled by Bicubic as .pt
+│   ├── rrdb_refined_train/           # Example output from preprocess_data_with_rrdb.py
+│   │   ├── hr_original/              # Stores original HR images as .pt
+│   │   ├── lr/                       # Stores LR images as .pt
+│   │   └── hr_rrdb_upscaled/         # Stores HR images upscaled by RRDBNet as .pt
+│   │                                 # (Note: lr_features are NOT saved by the current preprocess_data_with_rrdb.py, extracted on-the-fly)
+│   └── ...                           # Similar structure for validation splits
 │
-├── bicubic_output/                   # (Auto-generated by bicubic.py if saving output)
 ├── inference_results/                # (User-created or auto-generated) For saving inference outputs
 │
 ├── logs_rrdb/                        # (Auto-generated) TensorBoard logs for RRDBNet training
 ├── checkpoints_rrdb/                 # (Auto-generated) Checkpoints for RRDBNet training
-├── logs_diffusion_v2/                # (Auto-generated) TensorBoard logs for Diffusion Model (predicting RRDB residual)
-├── checkpoints_diffusion_v2/         # (Auto-generated) Checkpoints for Diffusion Model (predicting RRDB residual)
-├── cv_logs_diffusion/                # (Auto-generated, possibly from older train_diffusion.py) Logs for Diffusion (refining bicubic)
-├── cv_checkpoints_diffusion/         # (Auto-generated, possibly from older train_diffusion.py) Checkpoints for Diffusion (refining bicubic)
 │
-├── bicubic.py                        # Bicubic upscaling script
+├── logs_diffusion_bicubic/           # (Auto-generated) TensorBoard logs for Diffusion (refining bicubic)
+├── checkpoints_diffusion_bicubic/    # (Auto-generated) Checkpoints for Diffusion (refining bicubic)
 │
-├── diffusion_modules.py              # Defines U-Net, RRDBNet, and other network components
-├── diffusion_trainer.py              # Training logic for Diffusion Models (U-Net)
-├── diffusion_infer.py                # Inference for Diffusion Model (likely refining Bicubic/RRDB base)
-├── diffusion_infer_with_rrdb_residual.py # Inference for Diffusion Model refining an RRDBNet output
+├── logs_diffusion_rrdb_residual/     # (Auto-generated) TensorBoard logs for Diffusion (predicting RRDB residual)
+├── checkpoints_diffusion_rrdb_residual/ # (Auto-generated) Checkpoints for Diffusion (predicting RRDB residual)
 │
-├── rrdb_trainer.py                   # Training logic for RRDBNet
-├── rrdb_infer.py                     # Inference for standalone RRDBNet
+├── src/
+│   ├── data_handling/
+│   │   ├── dataset.py                # Defines ImageDataset, ImageDatasetRRDB
+│   │   ├── preprocess_data_with_bicubic.py # Preprocesses for Bicubic-based pipelines
+│   │   └── preprocess_data_with_rrdb.py  # Preprocesses for RRDB-refinement pipeline
+│   │
+│   ├── diffusion_modules/
+│   │   ├── attention_block.py        # Transformer/Attention blocks for U-Net
+│   │   ├── rrdb.py                   # Defines RRDBNet architecture
+│   │   └── unet.py                   # Defines U-Net architecture
+│   │
+│   ├── trainers/
+│   │   ├── diffusion_trainer.py      # Defines DiffusionTrainer class
+│   │   └── rrdb_trainer.py           # Defines BasicRRDBNetTrainer class
+│   │
+│   └── utils/
+│       ├── bicubic.py                # Bicubic upscaling utility
+│       └── network_comopents.py      # Auxiliary network components (SinusoidalPosEmb, ResnetBlock, etc.)
 │
-├── train_rrdb.py                     # Main script to train RRDBNet
-├── train_diffusion.py                # Main script to train Diffusion Model (refining Bicubic, using ImageDataset)
-├── train_diffusion_predict_rrdb_residual.py # Main script to train Diffusion Model (refining RRDBNet, using ImageDatasetRRDB)
-│
-├── utils/
-│   ├── dataset.py                    # Defines ImageDataset and ImageDatasetRRDB
-│   ├── network_comopents.py          # Auxiliary network components (SinusoidalPosEmb, ResnetBlock, etc.)
-│   ├── preprocess_data_with_bicubic.py # Preprocesses data for Bicubic-based pipelines (saves LR, HR, Bicubic HR)
-│   └── preprocess_data_with_rrdb.py  # Preprocesses data for RRDB-refinement pipeline (saves LR, HR, RRDB HR, LR features)
+├── scripts/
+│   ├── diffusion_infer.py            # Inference for Diffusion Model (refining RRDBNet output)
+│   ├── rrdb_infer.py                 # Inference for standalone RRDBNet
+│   ├── train_diffusion.py            # Main script to train Diffusion Model (refining Bicubic)
+│   ├── train_diffusion_predict_rrdb_residual.py # Main script to train Diffusion Model (refining RRDBNet)
+│   └── train_rrdb.py                 # Main script to train RRDBNet
 │
 ├── requirements.txt                  # Python dependencies
 └── README.md                         # This file
@@ -126,7 +139,7 @@ computer_vision_project/
 
 1.  **Clone the repository (if applicable):**
     ```bash
-    git clone https://github.com/Hoang604/computer_vision_project.git
+    git clone [https://github.com/Hoang604/computer_vision_project.git](https://github.com/Hoang604/computer_vision_project.git)
     cd computer_vision_project
     ```
 
@@ -139,7 +152,7 @@ computer_vision_project/
 
     **Alternatively, using Conda:**
     ```bash
-    conda create -n myenv python=3.13
+    conda create -n myenv python=3.9 # Or your preferred Python version
     conda activate myenv
     ```
 
@@ -147,19 +160,19 @@ computer_vision_project/
     ```bash
     pip install -r requirements.txt
     ```
-    *Note*: Ensure your PyTorch version is compatible with your CUDA version if using a GPU. The `requirements.txt` specifies `torch==2.7.0` and `torchvision==0.22.0`.
+    *Note*: Ensure your PyTorch version is compatible with your CUDA version if using a GPU. The `requirements.txt` specifies `torch` and `torchvision`.
 
 ## Data Preparation
 
-### Option 1: On-the-fly Processing (for `train_diffusion.py`)
+### Option 1: On-the-fly Processing (for `scripts/train_diffusion.py`)
 
 * Place your high-resolution (HR) images in a directory (e.g., `data/my_hr_images/`).
-* The `ImageDataset` used by `train_diffusion.py` will handle creating Low-Resolution (LR) images, Bicubic upscaled images, and the residual (HR - Bicubic upscaled) during data loading.
+* The `ImageDataset` (defined in `src/data_handling/dataset.py`) used by `scripts/train_diffusion.py` will handle creating Low-Resolution (LR) images, Bicubic upscaled images, and the residual (HR - Bicubic upscaled) during data loading.
 
 ### Option 2: Preprocessing for Advanced Pipelines
 
-#### a) Preprocessing with Bicubic (using `utils/preprocess_data_with_bicubic.py`)
-This script creates a dataset suitable for pipelines that might start with Bicubic upscaling.
+#### a) Preprocessing with Bicubic (using `src/data_handling/preprocess_data_with_bicubic.py`)
+This script creates a dataset suitable for pipelines that might start with Bicubic upscaling or need these specific tensor components.
 It saves:
     * Original HR images (resized to `img_size`).
     * LR images.
@@ -167,7 +180,7 @@ It saves:
 
 **Example Usage:**
 ```bash
-python utils/preprocess_data_with_bicubic.py \
+python -m src.data_handling.preprocess_data_with_bicubic \
     --input_dir data/my_hr_images \
     --output_dir preprocessed_data/bicubic_processed_train \
     --img_size 160 \
@@ -175,29 +188,29 @@ python utils/preprocess_data_with_bicubic.py \
     --device cuda:0
 ```
 
-#### b) Preprocessing with RRDBNet (using `utils/preprocess_data_with_rrdb.py`)
-This script is crucial for the "Diffusion Model Refining RRDBNet Upscaling" pipeline.
-It saves:
+#### b) Preprocessing with RRDBNet (using `src/data_handling/preprocess_data_with_rrdb.py`)
+This script is crucial for the "Diffusion Model Refining RRDBNet Upscaling" pipeline (`scripts/train_diffusion_predict_rrdb_residual.py` and `scripts/diffusion_infer.py`).
+The current version (`preprocess_images_batched_rrdb_no_features` function within the script) saves:
     * Original HR images (resized to `img_size`).
     * LR images.
     * HR images upscaled from LR using a specified RRDBNet (the "base SR" model).
-    * Features extracted from the LR images using another (or the same) RRDBNet (the "context extractor" model).
+It **does not** pre-save LR features; these are extracted on-the-fly during training/inference.
 
 **Example Usage:**
 ```bash
-python utils/preprocess_data_with_rrdb.py \
+python -m src.data_handling.preprocess_data_with_rrdb \
     --input_dir data/my_hr_images/train \
     --output_dir preprocessed_data/rrdb_refined_train \
     --img_size 160 \
     --downscale_factor 4 \
-    --rrdb_weights_path checkpoints_rrdb/your_rrdb_model/rrdb_model_best.pth \
+    --rrdb_weights_path_for_upscaling checkpoints_rrdb/your_rrdb_model_for_upscaling/rrdb_model_best.pth \
     --rrdb_num_feat 64 \
     --rrdb_num_block 17 \
     --rrdb_gc 32 \
     --batch_size 32 \
     --device cuda:0
 ```
-* `--rrdb_weights_path`: Path to the pre-trained RRDBNet model that will be used for BOTH upscaling the LR image (to create `hr_rrdb_upscaled`) AND extracting features from the LR image (to create `lr_features`). The configuration arguments (`--rrdb_num_feat`, `--rrdb_num_block`, `--rrdb_gc`) must match this loaded model.
+* `--rrdb_weights_path_for_upscaling`: Path to the pre-trained RRDBNet model that will be used for upscaling the LR image (to create `hr_rrdb_upscaled`). The configuration arguments (`--rrdb_num_feat`, `--rrdb_num_block`, `--rrdb_gc`) must match this loaded model.
 
 Create separate preprocessed datasets for training and validation by pointing `--input_dir` and `--output_dir` accordingly.
 
@@ -205,11 +218,11 @@ Create separate preprocessed datasets for training and validation by pointing `-
 
 ### 1. Train RRDBNet (Standalone or as a component)
 
-Use `train_rrdb.py`. This RRDBNet can be used for direct SR, as a base upscaler for the diffusion refinement pipeline, or as a context extractor for conditioning the U-Net.
+Use `scripts/train_rrdb.py`. This RRDBNet can be used for direct SR, as a base upscaler for the diffusion refinement pipeline, or as a context extractor for conditioning the U-Net.
 
 **Example Command:**
 ```bash
-python train_rrdb.py \
+python -m scripts.train_rrdb \
     --image_folder data/my_hr_images/train \
     --val_image_folder data/my_hr_images/validation \
     --img_size 160 \
@@ -232,29 +245,25 @@ python train_rrdb.py \
     # --predict_residual  # Add this flag to train RRDBNet to predict (HR - Bicubic upscaled LR)
     # --weights_path checkpoints_rrdb/some_experiment/rrdb_model_epoch_XX.pth # To resume training
 ```
-**Key Arguments for `train_rrdb.py`:**
-* `--image_folder`: Path to training HR images.
-* `--val_image_folder`: Path to validation HR images (optional).
-* `--img_size`, `--downscale_factor`: Dataset parameters.
-* `--rrdb_num_feat`, `--rrdb_num_block`, `--rrdb_gc`: RRDBNet architecture.
-* `--epochs`, `--batch_size`, `--accumulation_steps`, `--learning_rate`: Training loop parameters.
-* `--scheduler_type`: Type of learning rate scheduler (e.g., `none`, `StepLR`, `CosineAnnealingLR`, `CosineAnnealingWarmRestarts`, `ReduceLROnPlateau`).
-    * Additional arguments are available for each scheduler type (e.g., `--cosine_t_max`, `--step_lr_step_size`).
-* `--exp_name`: Experiment name for logs and checkpoints.
-* `--weights_path`: Path to a checkpoint to resume training.
+**Key Arguments for `scripts/train_rrdb.py`:** (Refer to the script's `argparse` for full details)
+* `--image_folder`, `--val_image_folder`: Paths to HR image data (expects preprocessed bicubic data if using `ImageDatasetBicubic`).
+* Model architecture: `--rrdb_num_feat`, `--rrdb_num_block`, `--rrdb_gc`.
+* Training loop: `--epochs`, `--batch_size`, `--accumulation_steps`, `--learning_rate`.
+* Scheduler: `--scheduler_type` and its related arguments (e.g., `--cosine_t_max`).
+* Logging/Saving: `--exp_name`, `--base_log_dir`, `--base_checkpoint_dir`, `--weights_path` (for resuming).
 * `--predict_residual`: If set, trains RRDBNet to predict the residual (HR - Bicubic upscaled LR).
 
 ### 2. Train Diffusion Model (U-Net)
 
-#### Pipeline A: Refining Bicubic Upscaling (using `train_diffusion.py`)
+#### Pipeline A: Refining Bicubic Upscaling (using `scripts/train_diffusion.py`)
 
-This pipeline trains a U-Net to predict the residual (HR - Bicubic upscaled LR) or the noise to reverse the noising of this residual. It's conditioned on features from an RRDBNet.
+This pipeline trains a U-Net to predict the residual (HR - Bicubic upscaled LR) or the noise to reverse the noising of this residual. It's conditioned on features from an RRDBNet, extracted on-the-fly from LR images. Data (LR, Bicubic HR, HR-Bicubic residual) is generated on-the-fly by `ImageDataset`.
 
 **Prerequisite**: A pre-trained RRDBNet model (e.g., from step 1) to act as the context extractor.
 
 **Example Command:**
 ```bash
-python train_diffusion.py \
+python -m scripts.train_diffusion \
     --image_folder data/my_hr_images/train \
     --img_size 160 \
     --downscale_factor 4 \
@@ -270,36 +279,32 @@ python train_diffusion.py \
     --unet_base_dim 64 \
     --unet_dim_mults 1 2 4 8 \
     --use_attention \
-    --rrdb_weights_path checkpoints_rrdb/rrdb_model_nb17_nf64/rrdb_model_best.pth \
+    --rrdb_weights_path checkpoints_rrdb/rrdb_context_extractor/rrdb_model_best.pth \
     --number_of_rrdb_blocks 17 \
     --rrdb_num_feat 64 \
     --rrdb_gc 32 \
-    --base_log_dir ./cv_logs_diffusion \
-    --base_checkpoint_dir ./cv_checkpoints_diffusion \
+    --base_log_dir ./logs_diffusion_bicubic \
+    --base_checkpoint_dir ./checkpoints_diffusion_bicubic \
     --exp_name diffusion_refine_bicubic
-    # --weights_path_unet cv_checkpoints_diffusion/some_exp/diffusion_model_best.pth # To resume U-Net training
+    # --weights_path_unet checkpoints_diffusion_bicubic/some_exp/diffusion_model_best.pth # To resume U-Net training
 ```
-**Key Arguments for `train_diffusion.py`:**
-* Dataset args: `--image_folder`, `--img_size`, `--downscale_factor`.
-* Training loop: `--epochs`, `--batch_size`, `--accumulation_steps`, `--learning_rate`.
-* Scheduler: `--scheduler_type` and its related arguments.
-* Diffusion: `--timesteps`, `--diffusion_mode` (`noise` or `v_prediction`).
+**Key Arguments for `scripts/train_diffusion.py`:** (Refer to the script's `argparse` for full details)
+* Dataset: `--image_folder`, `--img_size`, `--downscale_factor`.
 * U-Net: `--unet_base_dim`, `--unet_dim_mults`, `--use_attention`.
-* Context RRDBNet: `--rrdb_weights_path` (path to pre-trained RRDBNet), and its configuration (`--number_of_rrdb_blocks`, `--rrdb_num_feat`, `--rrdb_gc`) which **must match** the loaded RRDBNet.
+* Context RRDBNet: `--rrdb_weights_path` (path to pre-trained RRDBNet for context), and its configuration (`--number_of_rrdb_blocks`, `--rrdb_num_feat`, `--rrdb_gc`) which **must match** the loaded RRDBNet.
 * `--context_type`: Set to `LR` (default) as features are extracted from the LR image.
-* Logging/Saving: `--base_log_dir`, `--base_checkpoint_dir`, `--exp_name`, `--weights_path_unet` (for resuming).
 
-#### Pipeline B: Refining RRDBNet Upscaling (using `train_diffusion_predict_rrdb_residual.py`)
+#### Pipeline B: Refining RRDBNet Upscaling (using `scripts/train_diffusion_predict_rrdb_residual.py`)
 
-This pipeline trains a U-Net to predict the residual (True HR - RRDB-upscaled HR). It uses preprocessed data generated by `utils/preprocess_data_with_rrdb.py`.
+This pipeline trains a U-Net to predict the residual (True HR - RRDB-upscaled HR). It uses preprocessed data (LR, HR_RRDB_upscaled, HR_Original) generated by `src/data_handling/preprocess_data_with_rrdb.py`. Features from LR images are extracted on-the-fly by a context RRDBNet.
 
 **Prerequisites**:
-1.  Preprocessed data created by `utils/preprocess_data_with_rrdb.py`. This data includes LR images, HR images, HR images upscaled by a *base RRDBNet*, and features extracted from LR images by a *context RRDBNet*.
-2.  The configuration of the *context RRDBNet* used during preprocessing must be known for the U-Net's conditioning.
+1.  Preprocessed data created by `src/data_handling/preprocess_data_with_rrdb.py`.
+2.  A pre-trained RRDBNet model to act as the on-the-fly context extractor. Its configuration must be provided to the training script.
 
 **Example Command:**
 ```bash
-python train_diffusion_predict_rrdb_residual.py \
+python -m scripts.train_diffusion_predict_rrdb_residual \
     --preprocessed_data_folder preprocessed_data/rrdb_refined_train \
     --val_preprocessed_data_folder preprocessed_data/rrdb_refined_validation \
     --img_size 160 \
@@ -317,114 +322,75 @@ python train_diffusion_predict_rrdb_residual.py \
     --unet_base_dim 64 \
     --unet_dim_mults 1 2 4 8 \
     --use_attention \
-    --number_of_rrdb_blocks 17 \
-    --rrdb_num_feat 64 \
-    --rrdb_gc 32 \
-    --base_log_dir ./logs_diffusion_v2 \
-    --base_checkpoint_dir ./checkpoints_diffusion_v2 \
+    --rrdb_weights_path_context_extractor checkpoints_rrdb/context_extractor_rrdb/rrdb_model_best.pth \
+    --rrdb_num_block_context 17 \
+    --rrdb_num_feat_context 64 \
+    --rrdb_gc_context 32 \
+    --base_log_dir ./logs_diffusion_rrdb_residual \
+    --base_checkpoint_dir ./checkpoints_diffusion_rrdb_residual \
     --exp_name diffusion_refine_rrdb
-    # --weights_path_unet checkpoints_diffusion_v2/some_exp/diffusion_model_best.pth # To resume U-Net training
+    # --weights_path_unet checkpoints_diffusion_rrdb_residual/some_exp/diffusion_model_best.pth # To resume U-Net training
 ```
-**Key Arguments for `train_diffusion_predict_rrdb_residual.py`:**
-* Dataset: `--preprocessed_data_folder` (training data), `--val_preprocessed_data_folder` (validation data, optional).
-    * `--img_size`, `--downscale_factor`, `--apply_hflip` relate to how the preprocessed data was created and loaded.
-* Training loop & Scheduler: Similar to `train_diffusion.py`.
-* Diffusion & U-Net: Similar to `train_diffusion.py`.
-* Context RRDBNet Config: `--number_of_rrdb_blocks`, `--rrdb_num_feat`, `--rrdb_gc`. These define the architecture of the U-Net's conditioning projection and **must match the context RRDBNet used during preprocessing with `preprocess_data_with_rrdb.py`** (specifically, the features saved in `lr_features/`).
-* `--context`: Set to `LR` (default) for the `DiffusionTrainer`'s internal logic, though the actual conditioning features are pre-loaded.
-* Logging/Saving: Similar to `train_diffusion.py`.
+**Key Arguments for `scripts/train_diffusion_predict_rrdb_residual.py`:** (Refer to script's `argparse`)
+* Dataset: `--preprocessed_data_folder`, `--val_preprocessed_data_folder`.
+* Context RRDBNet (for on-the-fly feature extraction): `--rrdb_weights_path_context_extractor`, and its config (`--rrdb_num_block_context`, `--rrdb_num_feat_context`, `--rrdb_gc_context`). These define the architecture of the U-Net's conditioning projection and **must match the context RRDBNet being loaded**.
+* `--context`: Set to `LR` (default) for the `DiffusionTrainer`'s internal logic.
 
 ## How to Perform Inference
 
 ### 1. Inference with Standalone RRDBNet
 
-Use `rrdb_infer.py`. Modify the script to set:
+Use `scripts/rrdb_infer.py`.
+**Modify the script `scripts/rrdb_infer.py` internally to set:**
 * `model_path`: Path to your trained RRDBNet checkpoint (`.pth`).
 * `config`: Dictionary with the RRDBNet configuration (must match training).
-* `dataset`: Path to your test images.
+* `dataset`: Path to your test images (or modify `ImageDataset` initialization).
 * `predict_residual`: Set to `True` if the RRDBNet was trained to predict residuals, `False` otherwise.
 
 **Run:**
 ```bash
-python rrdb_infer.py
+python -m scripts.rrdb_infer
 ```
-The script will load a random image from the dataset, perform inference, and plot the LR, HR (ground truth), Bicubic upscaled, and RRDBNet constructed images.
+The script will load a random image, perform inference, and plot/show the results.
 
-### 2. Inference with Diffusion Model
+### 2. Inference with Diffusion Model (Refining RRDBNet Output)
 
-#### Pipeline A: Refining Bicubic/RRDB Base (using `diffusion_infer.py`)
+Use `scripts/diffusion_infer.py`. This script is designed to work with data preprocessed by `src/data_handling/preprocess_data_with_rrdb.py` (using `ImageDatasetRRDB`). It takes an LR image from this dataset, uses an RRDBNet (context extractor) to get features on-the-fly, and then a U-Net predicts the residual to refine the pre-upscaled RRDB image (also from the dataset).
 
-This script applies a trained U-Net (likely trained via `train_diffusion.py`) to refine an image.
-The script currently uses an RRDBNet to get an initial upscaled image (`up_rrdb_img`) and features (`feas`). The U-Net then predicts a residual which is added to `up_rrdb_img`.
+**Modify `scripts/diffusion_infer.py` internally to set:**
+* `rrdb_path`: Path to the RRDBNet checkpoint (used as context extractor). Its configuration (`config` variable in the script) must match the loaded model.
+* `unet_path`: Path to the trained U-Net checkpoint. The U-Net instantiation (`unet = Unet(...)`) must match the trained model's architecture (e.g., `use_attention`, `rrdb_num_blocks` for conditioning which should match context extractor's `num_block`).
+* `img_folder`: Path to the preprocessed data directory (e.g., `preprocessed_data/rrdb_refined_test/`) that `ImageDatasetRRDB` will use.
+* `img_size`: Must match the data.
+* `predict_mode` for `ResidualGenerator` must match how the U-Net was trained (`noise` or `v_prediction`).
 
-**Modify `diffusion_infer.py`:**
-* `args.rrdb_weights_path`: Path to the RRDBNet checkpoint (used for base upscaling and feature extraction).
-* `config` (for RRDBNet): Must match the loaded RRDBNet.
-* `unet = Unet(...)`: Ensure U-Net architecture matches the trained model (e.g., `use_attention`, `rrdb_num_blocks` for conditioning).
-* `DiffusionTrainer.load_model_weights(model=unet, model_path=...)`: Path to the trained U-Net checkpoint.
-* `ResidualGenerator(..., predict_mode='...')`: `predict_mode` must match U-Net training.
-* `args.lr_img_path`: Path to the input low-resolution image.
-
-**Example Run (after script modification):**
+**Run (after script modification):**
 ```bash
-python diffusion_infer.py \
-    --lr_img_path data/test_samples/my_lr_image.png \
-    --rrdb_weights_path checkpoints_rrdb/rrdb_model_nb17_nf64/rrdb_model_best.pth \
-    --unet_weights_path cv_checkpoints_diffusion/diffusion_refine_bicubic/diffusion_model_best.pth \
-    --lr_img_size 40 \
-    --num_inference_steps 50 \
-    --device cuda:0
+python -m scripts.diffusion_infer
 ```
-*(Note: `lr_img_size` in `diffusion_infer.py` seems to imply the HR size for the `ResidualGenerator`, calculated as `args.lr_img_size * 4`. The argument name might be confusing.)*
+The script will load a random sample, perform inference, and plot/save the results.
 
-#### Pipeline B: Refining RRDBNet Upscaling (using `diffusion_infer_with_rrdb_residual.py`)
-
-This script applies a U-Net (trained via `train_diffusion_predict_rrdb_residual.py`) to refine an initial HR image generated by a base RRDBNet.
-
-**Example Run:**
-```bash
-python diffusion_infer_with_rrdb_residual.py \
-    --input_hr_image_for_infer data/test_samples/my_hr_image_for_test.png \
-    --output_image_path inference_results/refined_output.png \
-    --img_size 160 \
-    --downscale_factor 4 \
-    --rrdb_weights_path_for_base_sr checkpoints_rrdb/base_rrdb_for_sr/rrdb_model_best.pth \
-    --rrdb_num_feat_preproc 64 \
-    --rrdb_num_block_preproc 17 \
-    --rrdb_gc_preproc 32 \
-    --rrdb_weights_path_context_extractor checkpoints_rrdb/context_extractor_rrdb/rrdb_model_best.pth \
-    --rrdb_num_feat_context 64 \
-    --rrdb_num_block_context 17 \
-    --rrdb_gc_context 32 \
-    --unet_weights_path checkpoints_diffusion_v2/diffusion_refine_rrdb/diffusion_model_best.pth \
-    --unet_base_dim 64 \
-    --unet_dim_mults 1 2 4 8 \
-    --use_attention \
-    --diffusion_timesteps 1000 \
-    --diffusion_mode noise \
-    --diffusion_inference_steps 50 \
-    --device cuda:0
-```
-**Key Arguments for `diffusion_infer_with_rrdb_residual.py`:**
-* `--input_hr_image_for_infer`: Path to an HR image (it will be downscaled to create the LR input).
-* `--rrdb_weights_path_for_base_sr`: Path to the RRDBNet used to generate the initial HR image. Its config (`--rrdb_num_feat_preproc`, etc.) must match.
-* `--rrdb_weights_path_context_extractor`: Path to the RRDBNet used for extracting features to condition the U-Net. Its config (`--rrdb_num_feat_context`, etc.) must match. This should be the same RRDBNet configuration used during the `preprocess_data_with_rrdb.py` step for feature extraction.
-* `--unet_weights_path`: Path to the trained U-Net. Its config (`--unet_base_dim`, etc.) must match.
-* `--diffusion_mode`: Must match how the U-Net was trained.
+**Note on Refining Bicubic Upscaling (Inference):**
+As mentioned in "Implemented Models and Techniques", `scripts/diffusion_infer.py` is primarily for refining RRDB outputs. If you trained a model using `scripts/train_diffusion.py` (which refines Bicubic upscaling on-the-fly), you'll need to adapt an inference script. This would involve:
+1. Loading an LR image.
+2. Performing Bicubic upscaling.
+3. Using a context RRDBNet to extract features from the LR image.
+4. Using the U-Net (trained with `scripts/train_diffusion.py`) to predict the residual based on the Bicubic upscaled image and LR features.
+5. Adding this residual to the Bicubic upscaled image.
 
 ## Dependencies
 
-Key Python libraries are listed in `requirements.txt`:
+Key Python libraries are listed in `requirements.txt`. Ensure they are installed, for example:
 ```
-diffusers==0.33.1
-matplotlib==3.10.3
-numpy==2.2.6
-opencv_python==4.11.0.86 # opencv-python-headless is also an option
-Pillow==11.2.1
-torch==2.7.0
-torchvision==0.22.0
-tqdm==4.67.1
-# tensorboard (usually comes with PyTorch or can be installed separately)
+diffusers
+matplotlib
+numpy
+opencv-python
+Pillow
+torch
+torchvision
+tqdm
+# tensorboard (usually comes with PyTorch or can be installed separately: pip install tensorboard)
 ```
 
 ## Future Work / TODO
