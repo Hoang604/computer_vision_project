@@ -22,6 +22,7 @@ class DiffusionTrainer:
     noise schedule by default. The model can be trained to predict either
     the noise added during the forward process or a 'v-prediction' target.
     Learning rate scheduler can be integrated into the training loop.
+    Can now use an on-the-fly context_extractor model.
 
     Attributes:
         timesteps (int): The total number of timesteps in the diffusion process.
@@ -60,7 +61,7 @@ class DiffusionTrainer:
         """
         self.timesteps = timesteps
         self.device = device
-        
+
         if mode not in ["v_prediction", "noise"]:
             raise ValueError("Mode must be 'v_prediction' or 'noise'") # Validate mode
         self.mode = mode
@@ -192,6 +193,7 @@ class DiffusionTrainer:
 
         writer = SummaryWriter(log_dir) # Initialize TensorBoard writer
         # Consistent naming for best checkpoint
+        # Ensure checkpoint_dir is used for the base path of best_checkpoint_path
         best_checkpoint_path = os.path.join(checkpoint_dir, f'diffusion_model_{os.path.basename(checkpoint_dir)}_best.pth')
 
 
@@ -199,10 +201,7 @@ class DiffusionTrainer:
 
     def _initialize_training_steps(self, start_epoch, dataset_len, accumulation_steps):
         """Initialize step counters for resuming training."""
-        # Calculate effective batches per epoch considering accumulation steps
-        effective_batches_per_epoch = dataset_len // accumulation_steps
-        if dataset_len % accumulation_steps != 0:
-            effective_batches_per_epoch += 1
+        effective_batches_per_epoch = dataset_len
 
         global_step_optimizer = start_epoch * effective_batches_per_epoch # Global optimizer steps
         batch_step_counter = start_epoch * dataset_len # Total batches processed across all epochs
@@ -222,89 +221,37 @@ class DiffusionTrainer:
         else:
             raise ValueError(f"Unsupported training mode: {self.mode}") # Should not happen if validated in __init__
         return target
-    
-    def _prepare_batched_features(self, lr_features_batch_of_lists, actual_batch_size):
-        """
-        Converts a list of feature lists (one per sample) into a list of batched feature tensors.
-        Expected input: lr_features_batch_of_lists = [ [feat1_img1, feat2_img1, ...], [feat1_img2, feat2_img2, ...], ... ]
-        Expected output: condition_features_list = [ batched_feat1, batched_feat2, ... ]
-                         where batched_feat_i has shape (B, C_i, H_i, W_i)
-        """
-        condition_features_list = []
-        if not lr_features_batch_of_lists: # Check if the outer list is empty
-            # print("Warning: lr_features_batch_of_lists is empty. No features to prepare.") 
-            return [] # Return empty list, U-Net might handle None condition or error out
 
-        if actual_batch_size > 0:
-            # Check if the structure matches list of lists of tensors
-            if isinstance(lr_features_batch_of_lists, list) and \
-               len(lr_features_batch_of_lists) == actual_batch_size and \
-               all(isinstance(item, list) for item in lr_features_batch_of_lists) and \
-               all(all(isinstance(t, torch.Tensor) for t in inner_list) for inner_list in lr_features_batch_of_lists):
-
-                if not lr_features_batch_of_lists[0]: # Check if the inner list for the first sample is empty
-                    # print("Warning: Inner feature list is empty for the first sample. No features to prepare.") 
-                    return []
-
-                num_feature_tensors_per_sample = len(lr_features_batch_of_lists[0])
-                if num_feature_tensors_per_sample == 0:
-                    # print("Warning: No feature tensors per sample. No features to prepare.") 
-                    return []
-
-                for i in range(num_feature_tensors_per_sample):
-                    # Gather the i-th feature tensor from all samples in the batch
-                    try:
-                        feats_for_layer_i = [sample_features[i] for sample_features in lr_features_batch_of_lists]
-                    except IndexError:
-                        # This can happen if inner lists have different lengths, which indicates a data problem
-                        print(f"Error: Feature lists for samples in the batch have inconsistent lengths at feature index {i}.") 
-                        print(f"Length of feature list for sample 0: {len(lr_features_batch_of_lists[0])}") 
-                        # Consider raising an error or returning empty to halt problematic training
-                        raise ValueError("Inconsistent feature list lengths in batch.")
-
-                    # Stack them to create a batched tensor and move to device
-                    try:
-                        batched_feat_i = torch.stack(feats_for_layer_i).to(self.device)
-                        condition_features_list.append(batched_feat_i)
-                    except Exception as e_stack:
-                        print(f"Error stacking feature tensors for layer {i}: {e_stack}") 
-                        print(f"Shapes of tensors being stacked for layer {i}: {[f.shape for f in feats_for_layer_i]}") 
-                        raise
-            # Handling for batch_size=1 where collate_fn might not wrap the single list of features into another list
-            elif actual_batch_size == 1 and isinstance(lr_features_batch_of_lists, list) and \
-                 all(isinstance(t, torch.Tensor) for t in lr_features_batch_of_lists):
-                # lr_features_batch_of_lists is actually the feature list for the single sample
-                if not lr_features_batch_of_lists: # Check if the feature list itself is empty
-                    # print("Warning: Feature list for single sample batch is empty.") 
-                    return []
-                condition_features_list = [feat.unsqueeze(0).to(self.device) for feat in lr_features_batch_of_lists]
-            else:
-                print(f"Error: Unexpected format for lr_features_batch_of_lists. Batch size: {actual_batch_size}, Type: {type(lr_features_batch_of_lists)}") 
-                if lr_features_batch_of_lists: print(f"First element type: {type(lr_features_batch_of_lists[0])}") 
-                # Handle error: Unexpected format for lr_features_batch_of_lists
-                raise ValueError("Unexpected format for lr_features_batch_of_lists in _prepare_batched_features.")
-        return condition_features_list
-
-
-    def _perform_batch_step(self, model, batch_data, optimizer,
+    def _perform_batch_step(self, model, context_extractor, batch_data, optimizer,
                             accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True):
-        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual, lr_features_list_batch)
-        _, _, _, residual_image_batch, lr_features_batch_of_lists = batch_data
+        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual)
+        # lr_features_batch_of_lists is NO LONGER in batch_data
+        low_res_image_batch, _, _, residual_image_batch = batch_data
 
-        # low_res_image_batch = low_res_image_batch.to(self.device) # Not directly used if features are pre-loaded
+        low_res_image_batch = low_res_image_batch.to(self.device)
         residual_image_batch = residual_image_batch.to(self.device)
-
         actual_batch_size = residual_image_batch.shape[0]
-        condition_features_list = self._prepare_batched_features(lr_features_batch_of_lists, actual_batch_size)
 
-        with torch.set_grad_enabled(is_training):
+        # --- On-the-fly Feature Extraction ---
+        condition_features_list = None
+        if context_extractor is not None:
+            context_extractor.eval() # Ensure context extractor is in eval mode
+            with torch.no_grad(): # Feature extraction should not require gradients
+                _, raw_features_list_gpu = context_extractor(low_res_image_batch, get_fea=True)
+                condition_features_list = [feat.to(self.device) for feat in raw_features_list_gpu]
+        else:
+            print("Warning: Context extractor is None. U-Net will receive no explicit condition.")
+
+        # --- Diffusion Process and Model Prediction ---
+        with torch.set_grad_enabled(is_training): # Enable gradients only if training
             t = torch.randint(0, self.timesteps, (actual_batch_size,), device=self.device, dtype=torch.long)
-            residual_image_batch_t, noise_added = self.q_sample(residual_image_batch, t)
-            target = self._get_training_target(noise_added, residual_image_batch, t)
+            residual_image_batch_t, noise_added = self.q_sample(residual_image_batch, t) # Noise the target residual
+            target_for_unet = self._get_training_target(noise_added, residual_image_batch, t) # Get U-Net's target
 
             predicted_output = model(residual_image_batch_t, t, condition=condition_features_list)
-            loss = F.mse_loss(predicted_output, target)
+            loss = F.mse_loss(predicted_output, target_for_unet)
 
+        # --- Gradient Accumulation and Optimizer Step (if training) ---
         updated_optimizer_this_step = False
         if is_training:
             scaled_loss = loss / accumulation_steps
@@ -319,19 +266,21 @@ class DiffusionTrainer:
 
         return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step
 
-    def _run_validation_epoch(self, model, val_loader, writer, epoch):
-        model.eval()
+    def _run_validation_epoch(self, model, context_extractor, val_loader, writer, epoch):
+        model.eval() # Set diffusion model to eval mode
+        # context_extractor is already in eval mode if loaded by BasicRRDBNetTrainer.load_model_for_evaluation
         total_val_loss = 0.0
         num_val_batches = 0
-        print(f"\nRunning validation for epoch {epoch+1}...") 
+        print(f"\nRunning validation for epoch {epoch+1}...")
         progress_bar_val = tqdm(total=len(val_loader), desc=f"Validation Epoch {epoch+1}")
 
-        with torch.no_grad():
+        with torch.no_grad(): # No gradients needed for validation
             for batch_idx, batch_data in enumerate(val_loader):
                 loss_value, _, _, _ = self._perform_batch_step(
-                    model, batch_data,
-                    optimizer=None, accumulation_steps=1, current_accumulation_idx=0, global_step_optimizer=0,
-                    is_training=False
+                    model, context_extractor, batch_data,
+                    optimizer=None, # No optimizer needed for validation
+                    accumulation_steps=1, current_accumulation_idx=0, global_step_optimizer=0, # Dummy values
+                    is_training=False # Set to False for validation
                 )
                 total_val_loss += loss_value
                 num_val_batches += 1
@@ -340,163 +289,197 @@ class DiffusionTrainer:
 
         progress_bar_val.close()
         avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else float('nan')
-        print(f"Epoch {epoch+1} Average Validation Loss ({self.mode}): {avg_val_loss:.4f}") 
+        print(f"Epoch {epoch+1} Average Validation Loss ({self.mode}): {avg_val_loss:.4f}")
 
         if writer:
             writer.add_scalar(f'Loss_{self.mode}/validation_epoch_avg', avg_val_loss, epoch + 1)
         return avg_val_loss
 
     def _log_and_checkpoint_epoch_end(self, epoch, model, optimizer, scheduler, train_epoch_losses,
-                                        current_best_val_loss, 
-                                        val_loss_this_epoch,   
+                                        current_best_val_loss,
+                                        val_loss_this_epoch,
                                         global_step_optimizer, best_checkpoint_path, writer,
-                                        dataset_for_samples, context_extractor): # Removed save_every_n_epochs
+                                        dataset_for_samples, context_extractor): # Added context_extractor
         """Handle end-of-epoch tasks: log loss, save checkpoint, step scheduler, generate sample images."""
         mean_train_loss = np.mean(train_epoch_losses) if train_epoch_losses else float('nan')
-        print(f"Epoch {epoch+1} Average Training Loss ({self.mode}): {mean_train_loss:.4f}") 
+        print(f"Epoch {epoch+1} Average Training Loss ({self.mode}): {mean_train_loss:.4f}")
         writer.add_scalar(f'Loss_{self.mode}/train_epoch_avg', mean_train_loss, epoch + 1)
 
         if optimizer.param_groups:
             current_lr = optimizer.param_groups[0]['lr']
             writer.add_scalar(f'LearningRate/epoch', current_lr, epoch + 1)
-            print(f"Current Learning Rate at end of epoch {epoch+1}: {current_lr:.2e}") 
+            print(f"Current Learning Rate at end of epoch {epoch+1}: {current_lr:.2e}")
 
         new_best_val_loss = current_best_val_loss
-        if val_loss_this_epoch is not None and val_loss_this_epoch < current_best_val_loss:
-            new_best_val_loss = val_loss_this_epoch
+        # Save best model based on validation loss if available, otherwise training loss
+        loss_for_comparison = val_loss_this_epoch if val_loss_this_epoch is not None else mean_train_loss
+
+        if loss_for_comparison is not None and not np.isnan(loss_for_comparison) and loss_for_comparison < current_best_val_loss:
+            new_best_val_loss = loss_for_comparison
             checkpoint_data = {
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': new_best_val_loss, # Store best val loss
-                'train_loss_epoch': mean_train_loss, 
+                'loss': new_best_val_loss, # Store best val/train loss
+                'train_loss_epoch_avg': mean_train_loss, # Always log average train loss
+                'val_loss_epoch_avg': val_loss_this_epoch, # Log val loss if available
                 'global_optimizer_steps': global_step_optimizer,
                 'mode': self.mode
             }
             if scheduler:
                 checkpoint_data['scheduler_state_dict'] = scheduler.state_dict()
-            
+
             torch.save(checkpoint_data, best_checkpoint_path)
-            print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Val Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})") 
-        try:
-            print(f"Saving model at epoch {epoch + 1}")
-            checkpoint_data2 = {
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': mean_train_loss, # Store best val loss
-                'train_loss_epoch': mean_train_loss, 
-                'global_optimizer_steps': global_step_optimizer,
-                'mode': self.mode
-            }
-            if scheduler:
-                checkpoint_data2['scheduler_state_dict'] = scheduler.state_dict()
-            checkpoint_train_path = os.path.join(os.path.dirname(best_checkpoint_path), f'diffusion_model_epoch_{epoch + 1}.pth')
-            torch.save(checkpoint_data2, checkpoint_train_path)
-        except Exception as e:
-            print(f"Error saving train best loss checkpoint: {e}")
-            pass
+            print(f"Saved new best model checkpoint to {best_checkpoint_path} (Epoch {epoch+1}, Best Loss: {new_best_val_loss:.4f}, Train Loss: {mean_train_loss:.4f})")
+
+        # Save a checkpoint for the current epoch (non-best)
+        # This is useful for resuming if training is interrupted.
+        current_epoch_checkpoint_path = os.path.join(os.path.dirname(best_checkpoint_path), f'diffusion_model_epoch_{epoch + 1}.pth')
+        current_epoch_checkpoint_data = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': mean_train_loss, # Save current training loss for this epoch's checkpoint
+            'train_loss_epoch_avg': mean_train_loss,
+            'val_loss_epoch_avg': val_loss_this_epoch,
+            'global_optimizer_steps': global_step_optimizer,
+            'mode': self.mode
+        }
+        if scheduler:
+            current_epoch_checkpoint_data['scheduler_state_dict'] = scheduler.state_dict()
+        torch.save(current_epoch_checkpoint_data, current_epoch_checkpoint_path)
+        print(f"Saved checkpoint for epoch {epoch + 1} to {current_epoch_checkpoint_path}")
+
 
         if scheduler:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                if val_loss_this_epoch is not None:
-                    scheduler.step(val_loss_this_epoch) 
-                    print(f"ReduceLROnPlateau scheduler stepped with val_loss {val_loss_this_epoch:.4f}.") 
+                metric_for_plateau = val_loss_this_epoch if val_loss_this_epoch is not None else mean_train_loss
+                if metric_for_plateau is not None and not np.isnan(metric_for_plateau):
+                    scheduler.step(metric_for_plateau)
+                    print(f"ReduceLROnPlateau scheduler stepped with metric {metric_for_plateau:.4f}.")
                 else:
-                    print("ReduceLROnPlateau scheduler not stepped as validation was not run this epoch.") 
-            else:
-                scheduler.step() 
-                print(f"Epoch-based scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}") 
-        
+                    print("ReduceLROnPlateau scheduler not stepped as metric is None or NaN.")
+            else: # For other schedulers like CosineAnnealingLR, StepLR (if epoch-based)
+                scheduler.step()
+                print(f"Epoch-based scheduler stepped. New LR (from optimizer): {optimizer.param_groups[0]['lr']:.2e}")
+
         if dataset_for_samples is not None: # Generate samples
             try:
-                self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor)
+                self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor) # Pass context_extractor
             except Exception as e_sample:
-                print(f"Error during sample generation: {e_sample}") 
+                print(f"Error during sample generation: {e_sample}")
+                import traceback
+                traceback.print_exc()
         return new_best_val_loss
 
-    def _generate_and_log_samples(self, model, dataset, epoch, writer): # Removed context_extractor
-        print(f"Generating sample images for TensorBoard at epoch {epoch+1}...") 
+    def _generate_and_log_samples(self, model, dataset_loader, epoch, writer, context_extractor): # Added context_extractor
+        print(f"Generating sample images for TensorBoard at epoch {epoch+1}...")
+        model.eval() # Set diffusion model to eval
+        # context_extractor is assumed to be in eval mode already
+
         try:
+            # Infer img_channels and img_size from the dataset if possible
             img_channels_sample = 3 # Default
             img_size_sample = 160   # Default
-            if hasattr(dataset, 'dataset') and hasattr(dataset.dataset, 'img_size'):
-                img_size_sample = dataset.dataset.img_size
-                # Try to infer channels from a sample if possible, though less direct
-                # For now, assume 3 channels for residual.
+            if hasattr(dataset_loader, 'dataset') and hasattr(dataset_loader.dataset, 'img_size'):
+                img_size_sample = dataset_loader.dataset.img_size
+                # Note: img_channels is usually fixed (e.g., 3 for RGB residuals)
             
+            # Initialize ResidualGenerator
             generator = ResidualGenerator(
-                img_channels=img_channels_sample, # U-Net output channels for residual
+                img_channels=img_channels_sample,
                 img_size=img_size_sample,
                 device=self.device,
-                num_train_timesteps=self.timesteps,
-                predict_mode=self.mode
+                num_train_timesteps=self.timesteps, # Timesteps U-Net was trained for
+                predict_mode=self.mode # 'v_prediction' or 'noise'
             )
-        except NameError:
-            print("Warning: ResidualGenerator class not found. Skipping sample generation.") 
+        except NameError: # If ResidualGenerator class is not found
+            print("Warning: ResidualGenerator class not found. Skipping sample generation.")
+            model.train() # Revert model to train mode
             return
-        except Exception as e:
-            print(f"Error initializing ResidualGenerator: {e}. Skipping sample generation.") 
+        except Exception as e_gen_init:
+            print(f"Error initializing ResidualGenerator: {e_gen_init}. Skipping sample generation.")
+            model.train()
             return
 
         sample_images_data = []
-        num_samples_to_generate = min(3, len(dataset.dataset) if hasattr(dataset, 'dataset') else 3)
+        # Get a few samples from the dataset_loader (which could be train or val loader)
+        num_samples_to_generate = min(3, dataset_loader.batch_size if dataset_loader.batch_size else 3)
         if num_samples_to_generate == 0:
-            print("Warning: Dataset is empty or too small for sample generation.") 
+            print("Warning: Cannot generate samples, effective num_samples_to_generate is 0.")
+            model.train()
+            return
+        
+        try:
+            # Get one batch from the dataset loader
+            sample_batch_data = next(iter(dataset_loader))
+            low_res_b, up_scale_b, original_b, residual_b_cpu = sample_batch_data
+        except StopIteration:
+            print("Warning: Not enough data in dataset_loader to generate samples.")
+            model.train()
+            return
+        except Exception as e_data_unpack:
+            print(f"Error unpacking sample batch data: {e_data_unpack}")
+            model.train()
             return
 
-        dataset_iter = iter(dataset)
-        for _ in range(num_samples_to_generate):
-            try:
-                # Unpack: low_res, upscaled_rrdb, original_hr, original_residual, lr_features_list
-                low_res_b, up_scale_b, original_b, residual_b_cpu, lr_features_sample_list_cpu = next(dataset_iter)
-            except StopIteration:
-                print("Warning: Not enough data in dataset to generate all samples.") 
-                break
+        # Take the first few items from the batch for sample generation
+        low_res_b = low_res_b[:num_samples_to_generate].to(self.device)
+        up_scale_b = up_scale_b[:num_samples_to_generate].to(self.device)
+        original_b = original_b[:num_samples_to_generate].to(self.device) # For display
+        residual_b_gt = residual_b_cpu[:num_samples_to_generate].to(self.device) # Ground truth residual
 
-            # Prepare single image samples for generation
-            # low_res_img_for_context_extractor = low_res_b[0].unsqueeze(0).to(self.device) # Not needed if features are pre-loaded
-            up_scale_img_for_recon = up_scale_b[0].unsqueeze(0).to(self.device) # Base for reconstruction
-            original_img_cpu_display = original_b[0].cpu().numpy()
-            # residual_gt_for_recon = residual_b_cpu[0].unsqueeze(0).to(self.device) # GT residual
-
-            # Prepare batched features for the single sample
-            # lr_features_sample_list_cpu is a list of tensors for one sample
-            # The generator expects features in the same format as the U-Net
-            features_for_sample_gen = [feat.unsqueeze(0).to(self.device) for feat in lr_features_sample_list_cpu]
+        # --- On-the-fly Feature Extraction for samples ---
+        sample_condition_features = None
+        if context_extractor is not None:
+            with torch.no_grad():
+                _, raw_features_list_gpu_sample = context_extractor(low_res_b, get_fea=True)
+                sample_condition_features = [feat.to(self.device) for feat in raw_features_list_gpu_sample]
+        else:
+            # This should ideally not be None if U-Net is conditional
+            print("Warning: context_extractor is None during sample generation. Passing None condition to U-Net.")
 
 
-            generated_residual = generator.generate_residuals(
+        # Generate residuals for the samples
+        with torch.no_grad():
+            generated_residuals_batch = generator.generate_residuals(
                 model=model,
-                features=features_for_sample_gen, # Pass pre-loaded and batched features
-                num_images=1 # Generating for one sample at a time here
+                features=sample_condition_features,
+                num_images=low_res_b.shape[0],
+                num_inference_steps=50
             )
-            reconstructed_image = up_scale_img_for_recon + generated_residual
-            reconstructed_image = torch.clamp(reconstructed_image, -1.0, 1.0)
-            reconstructed_image_norm = (reconstructed_image + 1.0) / 2.0
-            reconstructed_image_np = reconstructed_image_norm.cpu().numpy().squeeze(0)
 
-            # For comparison: original reconstructed from its true residual
-            original_reconstructed_image = up_scale_img_for_recon + residual_b_cpu[0].unsqueeze(0).to(self.device)
-            original_reconstructed_image = torch.clamp(original_reconstructed_image, -1.0, 1.0)
-            original_reconstructed_image_norm = (original_reconstructed_image + 1.0) / 2.0
-            original_reconstructed_image_np = original_reconstructed_image_norm.cpu().numpy().squeeze(0)
-
-            low_res_log = (low_res_b[0].cpu().numpy() + 1.0) / 2.0
+        # Reconstruct images and prepare for logging
+        for i in range(generated_residuals_batch.shape[0]):
+            lr_img_display = (low_res_b[i].cpu().numpy() + 1.0) / 2.0
+            hr_rrdb_display = (up_scale_b[i].cpu().numpy() + 1.0) / 2.0 # This is HR_RRDB
+            hr_orig_display = (original_b[i].cpu().numpy() + 1.0) / 2.0
+            
+            predicted_residual_display = (generated_residuals_batch[i].cpu().numpy() + 1.0) / 2.0
+            final_hr_constructed = torch.clamp(up_scale_b[i] + generated_residuals_batch[i], -1.0, 1.0)
+            final_hr_constructed_display = (final_hr_constructed.cpu().numpy() + 1.0) / 2.0
+            
+            true_residual_display = (residual_b_gt[i].cpu().numpy() + 1.0) / 2.0 # Residual_b_gt is [-2,2]
 
             sample_images_data.append({
-                "low_res": low_res_log,
-                "generated_hr": reconstructed_image_np,
-                "original_hr": (original_img_cpu_display + 1.0) / 2.0,
-                "reconstructed_original_hr": original_reconstructed_image_np
+                "low_res": np.clip(lr_img_display, 0, 1),
+                "hr_rrdb": np.clip(hr_rrdb_display, 0, 1),
+                "generated_residual": np.clip(predicted_residual_display, 0, 1),
+                "final_hr_refined": np.clip(final_hr_constructed_display, 0, 1),
+                "original_hr_gt": np.clip(hr_orig_display, 0, 1),
+                "true_residual_gt": np.clip(true_residual_display, 0, 1)
             })
 
         for i, imgs_dict in enumerate(sample_images_data):
             writer.add_image(f'Sample_{i}/01_LowRes_Input', imgs_dict["low_res"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/02_Generated_HR_Refined', imgs_dict["generated_hr"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/03_Original_HR_GroundTruth', imgs_dict["original_hr"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/04_Reconstructed_from_GT_Residual', imgs_dict["reconstructed_original_hr"], epoch + 1, dataformats='CHW')
-        print(f"Logged {len(sample_images_data)} sample images to TensorBoard.") 
+            writer.add_image(f'Sample_{i}/02_HR_RRDB_Base', imgs_dict["hr_rrdb"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/03_Predicted_Residual_Diffusion', imgs_dict["generated_residual"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/04_Final_HR_Refined', imgs_dict["final_hr_refined"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/05_Original_HR_GroundTruth', imgs_dict["original_hr_gt"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/06_True_Residual_GT_(HR_orig-HR_rrdb)', imgs_dict["true_residual_gt"], epoch + 1, dataformats='CHW')
+
+        print(f"Logged {len(sample_images_data)} sample images to TensorBoard.")
+        model.train() # Revert model to train mode
 
 
     def train(self,
@@ -504,6 +487,7 @@ class DiffusionTrainer:
                 model: torch.nn.Module,
                 optimizer,
                 scheduler=None,
+                context_extractor: torch.nn.Module = None,
                 val_dataset: DataLoader = None,
                 val_every_n_epochs: int = 1,
                 accumulation_steps=1,
@@ -513,10 +497,13 @@ class DiffusionTrainer:
                 log_dir_param=None,
                 checkpoint_dir_param=None,
                 log_dir_base="./logs_diffusion",
-                checkpoint_dir_base="./checkpoints_diffusion"
+                checkpoint_dir_base="./checkpoints_diffusion",
              ) -> None:
 
         model.to(self.device)
+        if context_extractor:
+            context_extractor.to(self.device)
+            context_extractor.eval()
 
         writer, checkpoint_dir, log_dir, best_checkpoint_path = self._setup_training_directories_and_writer(
             log_dir_base, checkpoint_dir_base, log_dir_param, checkpoint_dir_param
@@ -526,19 +513,21 @@ class DiffusionTrainer:
             start_epoch, len(dataset), accumulation_steps
         )
 
-        current_best_val_loss = best_loss if start_epoch > 0 else float('inf')
+        current_best_val_loss_tracker = best_loss
 
-        print(f"Starting training in '{self.mode}' mode on device: {self.device} with {accumulation_steps} accumulation steps.") 
-        print(f"Logging to: {log_dir}") 
-        print(f"Saving best checkpoints to: {checkpoint_dir}") 
-        if val_dataset: print(f"Validation will be performed every {val_every_n_epochs} epoch(s).") 
-        print(f"Initial global optimizer steps: {global_step_optimizer}, initial batch steps: {batch_step_counter}") 
-        print(f"Initial best validation loss: {current_best_val_loss:.6f}") 
+        print(f"Starting training in '{self.mode}' mode on device: {self.device} with {accumulation_steps} accumulation steps.")
+        if context_extractor:
+            print(f"Using on-the-fly context extraction with: {type(context_extractor).__name__}")
+        print(f"Logging to: {log_dir}")
+        print(f"Saving best checkpoints to: {best_checkpoint_path}")
+        if val_dataset: print(f"Validation will be performed every {val_every_n_epochs} epoch(s).")
+        print(f"Initial global optimizer steps: {global_step_optimizer}, initial batch steps: {batch_step_counter}")
+        print(f"Initial best tracked loss (from resume or inf): {current_best_val_loss_tracker:.6f}")
 
         if start_epoch == 0: optimizer.zero_grad()
 
         for epoch in range(start_epoch, epochs):
-            print(f"\nEpoch {epoch+1}/{epochs}") 
+            print(f"\nEpoch {epoch+1}/{epochs}")
             model.train()
 
             progress_bar_train = tqdm(total=len(dataset), desc=f"Training ({self.mode}, Epoch {epoch+1})")
@@ -546,7 +535,7 @@ class DiffusionTrainer:
 
             for batch_idx, batch_data in enumerate(dataset):
                 loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer = self._perform_batch_step(
-                    model, batch_data, optimizer,
+                    model, context_extractor, batch_data, optimizer,
                     accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True
                 )
 
@@ -561,26 +550,31 @@ class DiffusionTrainer:
 
             progress_bar_train.close()
 
-            current_val_loss_this_epoch = None
+            # --- End of Epoch Validation and Logging ---
+            current_val_loss_for_this_epoch = None # Reset for this epoch
             if val_dataset and (epoch + 1) % val_every_n_epochs == 0:
-                current_val_loss_this_epoch = self._run_validation_epoch(model, val_dataset, writer, epoch)
+                current_val_loss_for_this_epoch = self._run_validation_epoch(model, context_extractor, val_dataset, writer, epoch)
 
-            current_best_val_loss = self._log_and_checkpoint_epoch_end(
+            # Update best loss tracker and save checkpoints
+            current_best_val_loss_tracker = self._log_and_checkpoint_epoch_end(
                 epoch, model, optimizer, scheduler, train_epoch_losses,
-                current_best_val_loss, current_val_loss_this_epoch,
+                current_best_val_loss_tracker, # Pass the current best loss
+                current_val_loss_for_this_epoch, # Pass this epoch's validation loss (can be None)
                 global_step_optimizer, best_checkpoint_path, writer,
-                val_dataset if val_dataset else dataset
+                val_dataset if val_dataset else dataset, # Dataset for samples
+                context_extractor # Pass context_extractor for sample generation
             )
 
-        if current_accumulation_idx > 0:
-            print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...") 
+        # --- After all epochs ---
+        if current_accumulation_idx > 0: # If training ended mid-accumulation cycle
+            print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...")
             optimizer.step()
             optimizer.zero_grad()
             global_step_optimizer +=1
-            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}") 
+            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}")
 
         writer.close()
-        print(f"Training finished for mode '{self.mode}'. Final best validation loss: {current_best_val_loss:.4f}") 
+        print(f"Training finished for mode '{self.mode}'. Final best tracked loss: {current_best_val_loss_tracker:.4f}")
 
     @staticmethod
     def load_model_weights(model, model_path, verbose=False, device='cuda'):
@@ -602,22 +596,26 @@ class DiffusionTrainer:
             print(f"Warning: Model weights path not found: {model_path}. Model weights not loaded.") # Log warning
             return
 
-        print(f"Loading model weights from: {model_path} onto device: {device}") # Log loading attempt
-        # Load checkpoint, ensuring it's mapped to the specified device
-        checkpoint = torch.load(model_path, map_location=device, weights_only=False) # weights_only=False is safer for general checkpoints
+        print(f"Loading model weights from: {model_path} onto device: {device}")
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
         state_dict_to_load = None
         if isinstance(checkpoint, dict):
             if "model_state_dict" in checkpoint:
                 state_dict_to_load = checkpoint["model_state_dict"]
-                print("Found 'model_state_dict' in checkpoint.") # Log found key
-            elif "state_dict" in checkpoint and "model" in checkpoint["state_dict"]: # common in some frameworks
+                print("Found 'model_state_dict' in checkpoint.")
+            elif "state_dict" in checkpoint and "model" in checkpoint["state_dict"]:
                 state_dict_to_load = checkpoint["state_dict"]["model"]
-                print("Found 'state_dict' -> 'model' in checkpoint.") # Log found key
-            else: # Checkpoint is likely a state_dict itself
-                state_dict_to_load = checkpoint
-                print("Checkpoint appears to be a raw state_dict.") # Log raw state_dict
-                                
+                print("Found 'state_dict' -> 'model' in checkpoint.")
+            else:
+                is_likely_model_state_dict = all(not k.startswith(('optimizer', 'scheduler', 'epoch', 'loss')) for k in checkpoint.keys())
+                if is_likely_model_state_dict:
+                    state_dict_to_load = checkpoint
+                    print("Checkpoint appears to be a raw model state_dict.") # Log raw state_dict
+                else:
+                    print(f"Warning: Checkpoint dictionary does not contain a clear model state_dict. Keys: {list(checkpoint.keys())}")
+
+
         elif isinstance(checkpoint, torch.nn.Module): # If the entire model was saved
             state_dict_to_load = checkpoint.state_dict()
             print("Checkpoint was a full model object; extracting state_dict.") # Log full model saved
@@ -627,7 +625,6 @@ class DiffusionTrainer:
 
 
         if state_dict_to_load:
-            # Ensure model is on the correct device before loading state_dict
             model.to(device)
             incompatible_keys = model.load_state_dict(state_dict_to_load, strict=False) # Load with strict=False
             if incompatible_keys.missing_keys:
@@ -637,8 +634,11 @@ class DiffusionTrainer:
                 print(f"Info: {len(incompatible_keys.unexpected_keys)} keys in the checkpoint were not used by the current model.") # Log unexpected keys
                 if verbose: print(f"Unused (unexpected) keys: {incompatible_keys.unexpected_keys}") # Verbose log
 
-            num_loaded_params = sum(1 for k_model in model.state_dict() if k_model in state_dict_to_load and k_model not in incompatible_keys.unexpected_keys)
-            print(f"Successfully loaded {num_loaded_params} compatible parameters into the model on device {device}.") # Log success
+            if not incompatible_keys.missing_keys and not incompatible_keys.unexpected_keys:
+                print(f"Successfully loaded all parameters into the model on device {device}.")
+            else:
+                num_loaded_params = sum(1 for k_model in model.state_dict() if k_model in state_dict_to_load and k_model not in incompatible_keys.unexpected_keys)
+                print(f"Successfully loaded {num_loaded_params} compatible parameters into the model on device {device}.") # Log success
         else:
             print(f"Warning: Could not extract a loadable state_dict from {model_path}.") # Log failure
 
@@ -661,35 +661,28 @@ class DiffusionTrainer:
         Returns:
             tuple:
                 - int: `start_epoch` (the epoch to resume training from).
-                - float: `loaded_loss` (the loss value from the checkpoint).
+                - float: `loaded_best_loss` (the best loss value tracked up to the checkpoint).
         """
         start_epoch = 0
-        loaded_loss = float('inf')
-        # global_optimizer_steps = 0 # This will be loaded from checkpoint if available
-        # loaded_mode = None # This will be loaded from checkpoint if available
+        loaded_best_loss = float('inf') # This should be the best loss tracked so far
 
-        model.to(device) # Ensure model is on the target device
-        print(f"Attempting to load checkpoint for resume from: {checkpoint_path} onto device: {device}") # Log attempt
+        model.to(device)
+        print(f"Attempting to load checkpoint for resume from: {checkpoint_path} onto device: {device}")
 
         if not os.path.isfile(checkpoint_path):
-            print(f"Checkpoint file not found at {checkpoint_path}. Training will start from scratch.") # Log not found
-            return start_epoch, loaded_loss
+            print(f"Checkpoint file not found at {checkpoint_path}. Training will start from scratch.")
+            return start_epoch, loaded_best_loss
 
         try:
-            # Load checkpoint, ensuring it's mapped to the specified device
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False) # weights_only=False for complex checkpoints
-            print(f"Checkpoint dictionary loaded successfully from {checkpoint_path}.") # Log success
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+            print(f"Checkpoint dictionary loaded successfully from {checkpoint_path}.")
 
             # Load model state
             if 'model_state_dict' in checkpoint:
-                incompatible_model_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-                if incompatible_model_keys.missing_keys: print(f"Resume Warning: Missing keys in model state_dict: {incompatible_model_keys.missing_keys}")
-                if incompatible_model_keys.unexpected_keys: print(f"Resume Info: Unexpected keys in model state_dict from checkpoint: {incompatible_model_keys.unexpected_keys}")
-                if verbose_load and (incompatible_model_keys.missing_keys or incompatible_model_keys.unexpected_keys):
-                    print(f"Verbose Model Load Details: Missing={len(incompatible_model_keys.missing_keys)}, Unexpected={len(incompatible_model_keys.unexpected_keys)}")
-                print(f"Model state loaded successfully for resume.") # Log model state load
+                DiffusionTrainer.load_model_weights(model, checkpoint_path, verbose=verbose_load, device=device)
+                print(f"Model state loaded for resume via load_model_weights.")
             else:
-                print("Warning: 'model_state_dict' not found in checkpoint. Model weights not loaded for resume.") # Log warning
+                print("Warning: 'model_state_dict' not found in checkpoint. Model weights not loaded for resume.")
 
             # Load optimizer state
             if 'optimizer_state_dict' in checkpoint and optimizer is not None:
@@ -700,186 +693,146 @@ class DiffusionTrainer:
                         for k, v in state.items():
                             if isinstance(v, torch.Tensor):
                                 state[k] = v.to(device)
-                    print(f"Optimizer state loaded successfully for resume and moved to {device}.") # Log optimizer state load
+                    print(f"Optimizer state loaded successfully for resume and moved to {device}.") 
                 except Exception as optim_load_err:
-                     print(f"Error loading optimizer state for resume: {optim_load_err}. Optimizer will start from scratch.") # Log error
-            elif optimizer is None: print("Warning: Optimizer not provided, skipping optimizer state loading for resume.") # Log warning
-            else: print("Warning: 'optimizer_state_dict' not found in checkpoint. Optimizer starts from scratch for resume.") # Log warning
+                     print(f"Error loading optimizer state for resume: {optim_load_err}. Optimizer will start from scratch.") 
+            elif optimizer is None: print("Warning: Optimizer not provided, skipping optimizer state loading for resume.") 
+            else: print("Warning: 'optimizer_state_dict' not found in checkpoint. Optimizer starts from scratch for resume.")
 
             # Load scheduler state
             if 'scheduler_state_dict' in checkpoint and scheduler is not None:
                 try:
                     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                    print(f"Scheduler state loaded successfully for resume.") # Log scheduler state load
+                    print(f"Scheduler state loaded successfully for resume.") 
                 except Exception as sched_load_err:
-                    print(f"Error loading scheduler state for resume: {sched_load_err}. Scheduler may start from scratch or use loaded optimizer LR.") # Log error
-            elif scheduler is None: print("Info: Scheduler not provided, skipping scheduler state loading for resume.") # Log info
-            else: print("Info: 'scheduler_state_dict' not found in checkpoint. Scheduler may start from scratch.") # Log info
+                    print(f"Error loading scheduler state for resume: {sched_load_err}. Scheduler may start from scratch or use loaded optimizer LR.")
+            elif scheduler is None: print("Info: Scheduler not provided, skipping scheduler state loading for resume.")
+            else: print("Info: 'scheduler_state_dict' not found in checkpoint. Scheduler may start from scratch.")
 
 
             # Load epoch, loss, and other metadata
             if 'epoch' in checkpoint:
                 saved_epoch = checkpoint['epoch']
                 start_epoch = saved_epoch + 1 # Resume from the next epoch
-                print(f"Resuming training from epoch: {start_epoch}") # Log resume epoch
-            else: print("Warning: Epoch number not found in checkpoint. Starting from epoch 0 for resume.") # Log warning
+                print(f"Resuming training from epoch: {start_epoch}")
+            else: print("Warning: Epoch number not found in checkpoint. Starting from epoch 0 for resume.") 
 
-            if 'loss' in checkpoint:
-                loaded_loss = checkpoint['loss']
-                print(f"Loaded loss from checkpoint for resume: {loaded_loss:.6f}") # Log loaded loss
-            else: print("Info: Loss value not found in checkpoint. Using default best_loss for resume.") # Log info
+            if 'loss' in checkpoint: # This should be the 'best_loss' tracked so far
+                loaded_best_loss = checkpoint['loss']
+                print(f"Loaded 'best_loss' from checkpoint for resume: {loaded_best_loss:.6f}")
+            elif 'best_loss' in checkpoint: # If a more specific key exists
+                loaded_best_loss = checkpoint['best_loss']
+                print(f"Loaded 'best_loss' (specific key) from checkpoint for resume: {loaded_best_loss:.6f}")
+            else: print("Info: Best loss value not found in checkpoint. Using default best_loss (inf) for resume.")
 
             if 'global_optimizer_steps' in checkpoint:
-                # global_optimizer_steps = checkpoint['global_optimizer_steps'] # This is handled by _initialize_training_steps
-                print(f"Checkpoint saved with global_optimizer_steps: {checkpoint['global_optimizer_steps']}") # Log info
-            if 'mode' in checkpoint:
-                loaded_mode_from_ckpt = checkpoint['mode']
-                print(f"Checkpoint was saved with training mode: '{loaded_mode_from_ckpt}'. Current trainer mode is '{model.mode if hasattr(model, 'mode') else 'N/A (model has no mode attr)'}'. Ensure consistency.") # Log mode info
+                print(f"Checkpoint saved with global_optimizer_steps: {checkpoint['global_optimizer_steps']}")
+
 
         except Exception as e:
-            print(f"Error loading checkpoint for resume: {e}. Training will start from scratch.") # Log error
+            print(f"Error loading checkpoint for resume: {e}. Training will start from scratch.")
             # Reset to default start values if full checkpoint load fails
             start_epoch = 0
-            loaded_loss = float('inf')
-            # global_optimizer_steps = 0 # Reset
+            loaded_best_loss = float('inf')
 
-        return start_epoch, loaded_loss
+        return start_epoch, loaded_best_loss
 
 
 class ResidualGenerator:
     """
     A class for generating image residuals using a pre-trained diffusion model and a scheduler.
-
-    This class can be configured to work with models that predict either 'v' (v-prediction)
-    or 'noise' (epsilon-prediction) by setting the `predict_mode` during
-    initialization. It uses a `diffusers.SchedulerMixin` (like DDIMScheduler)
-    to perform the reverse diffusion process.
+    This class can now accept pre-extracted features for conditioning.
 
     Attributes:
         img_channels (int): Number of channels in the image (e.g., 3 for RGB).
         img_size (int): Height and width of the image.
         device (str or torch.device): Device for tensor operations.
         num_train_timesteps (int): The number of timesteps the diffusion model was trained for.
-                                   This is used to initialize the scheduler correctly.
-        predict_mode (str): The prediction type the model is expected to output,
-                            and how the scheduler should interpret it ("v_prediction" or "noise").
-        betas (torch.Tensor): The beta schedule used for the scheduler.
-        scheduler (diffusers.SchedulerMixin): The scheduler instance (e.g., DDIMScheduler)
-                                              used for the denoising steps, configured according
-                                              to `predict_mode`.
+        predict_mode (str): The prediction type the model is expected to output.
+        scheduler (diffusers.SchedulerMixin): The scheduler instance.
     """
     def __init__(self,
                  img_channels=3,
-                 img_size=256, # Default, will be overridden if inferred
+                 img_size=256,
                  device='cuda',
                  num_train_timesteps=1000,
                  predict_mode='v_prediction'):
-        """
-        Initializes the ResidualGenerator.
-
-        Sets up image parameters, device, and a DDIMScheduler. The scheduler is
-        configured based on the `predict_mode` (either "v_prediction"
-        or "noise") and uses a cosine beta schedule.
-
-        Args:
-            img_channels (int, optional): Number of image channels. Defaults to 3.
-            img_size (int, optional): Size (height and width) of the image. Defaults to 256.
-            device (str or torch.device, optional): Device for computations. Defaults to 'cuda'.
-            num_train_timesteps (int, optional): Number of training timesteps for the
-                                                 diffusion model this generator will use.
-                                                 Defaults to 1000.
-            predict_mode (str, optional): Specifies what the diffusion model is expected to predict.
-                                          Can be "v_prediction" or "noise".
-                                          Defaults to "v_prediction".
-        Raises:
-            ValueError: If `predict_mode` is not "v_prediction" or "noise".
-        """
         self.img_channels = img_channels
         self.img_size = img_size
         self.device = device
         self.num_train_timesteps = num_train_timesteps
 
         if predict_mode not in ["v_prediction", "noise"]:
-            raise ValueError("Prediction mode must be 'v_prediction' or 'noise'") # Validate mode
+            raise ValueError("Prediction mode must be 'v_prediction' or 'noise'")
         self.predict_mode = predict_mode
 
-        # Helper function to generate cosine beta schedule
         def cosine_beta_schedule(timesteps, s=0.008, dtype=torch.float32):
             steps = timesteps + 1
             x = torch.linspace(0, timesteps, steps, dtype=dtype)
             alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
             alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
             betas = 1. - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-            return torch.clip(betas, 0., 0.999) # Clip betas
+            return torch.clip(betas, 0., 0.999)
 
         self.betas = cosine_beta_schedule(self.num_train_timesteps).to(self.device)
 
-        # Initialize the DDIM scheduler based on the predict_mode
         self.scheduler = DDIMScheduler(
             num_train_timesteps=self.num_train_timesteps,
-            trained_betas=self.betas.cpu().numpy(), # DDIMScheduler might expect numpy array
-            beta_schedule="trained_betas", # Indicate use of pre-computed betas
-            prediction_type=self.predict_mode if self.predict_mode == 'v_prediction' else 'epsilon' if self.predict_mode == 'noise' else 'sample', # Crucial: sets how scheduler interprets model output
-            clip_sample=False, # Manual clipping is often preferred
-            set_alpha_to_one=False, # Standard for cosine schedules
-            steps_offset=1, # Common setting
+            trained_betas=self.betas.cpu().numpy(),
+            beta_schedule="trained_betas",
+            prediction_type=self.predict_mode if self.predict_mode == 'v_prediction' else 'epsilon' if self.predict_mode == 'noise' else 'sample',
+            clip_sample=False,
+            set_alpha_to_one=False,
+            steps_offset=1,
         )
         print(f"ResidualGenerator initialized with {type(self.scheduler).__name__}, "
               f"configured for model prediction_type='{self.predict_mode}'. "
-              f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.") # Log init
+              f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.")
 
     @torch.no_grad()
-    def generate_residuals(self, model, features, num_images=1, num_inference_steps=50): # Added context_extractor
+    def generate_residuals(self, model, features, num_images=1, num_inference_steps=50):
         """
-        Generates image residuals using the provided diffusion model, context_extractor, and the configured scheduler.
-
-        The model's output (either 'v' or 'noise') should match the
-        `predict_mode` this ResidualGenerator was initialized with.
+        Generates image residuals using the provided diffusion model and pre-extracted features.
 
         Args:
             model (torch.nn.Module): The pre-trained diffusion model (e.g., a U-Net).
-            low_resolution_image (torch.Tensor): The low-resolution image to condition the generation on.
-                                                 Shape: [batch_size, img_channels, H_lr, W_lr].
-            context_extractor (torch.nn.Module): The model used to extract condition features from low_resolution_image.
-            num_images (int, optional): Number of images/residuals to generate. Defaults to 1.
-                                        Must match the batch size of `low_resolution_image`.
+            features (list[torch.Tensor] or None): A list of pre-extracted feature tensors
+                                                   to condition the U-Net. Each tensor in the list
+                                                   should be batched [num_images, C_feat, H_feat, W_feat].
+                                                   Can be None if the model is unconditional (not typical for this project).
+            num_images (int, optional): Number of images/residuals to generate.
+                                        Must match the batch size of `features` if provided. Defaults to 1.
             num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
 
         Returns:
             torch.Tensor: A batch of generated residuals.
                           Shape: [num_images, img_channels, img_size, img_size].
         """
-        model.eval() # Set model to evaluation mode
-        model.to(self.device) # Ensure model is on correct device
+        model.eval()
+        model.to(self.device)
 
         print(f"Generating {num_images} residuals using {num_inference_steps} steps "
               f"with {type(self.scheduler).__name__} (model expected to predict: '{self.predict_mode}') "
-              f"on device {self.device}...") # Log generation start
+              f"on device {self.device}...")
 
-        self.scheduler.set_timesteps(num_inference_steps, device=self.device) # Set scheduler timesteps
+        self.scheduler.set_timesteps(num_inference_steps, device=self.device)
 
-        # Initialize with random noise (latent space representation for the residual)
         image_latents = torch.randn(
-            (num_images, self.img_channels, self.img_size, self.img_size), # Shape for residual
+            (num_images, self.img_channels, self.img_size, self.img_size),
             device=self.device
         )
-        image_latents = image_latents * self.scheduler.init_noise_sigma # Scale initial noise
+        image_latents = image_latents * self.scheduler.init_noise_sigma
 
-        # Iteratively denoise the latents
         for t_step in tqdm(self.scheduler.timesteps, desc="Generating residuals"):
-            model_input = image_latents # Current noisy latents for the residual
+            model_input = image_latents
+            t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device)
 
-            t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device) # Timestep for the batch
-
-            # Model predicts based on its training (either 'v' or 'noise' for the residual)
-            # Pass the extracted feature list as the condition
+            # U-Net prediction, conditioned on the provided features
             model_output = model(model_input, t_for_model, condition=features)
 
-            # Scheduler step to compute the previous noisy sample
             scheduler_output = self.scheduler.step(model_output, t_step, image_latents)
-            image_latents = scheduler_output.prev_sample # Update latents
+            image_latents = scheduler_output.prev_sample
 
-        generated_residuals = image_latents # Final denoised latents are the generated residuals
-
-        print("Residual generation complete.") # Log completion
+        generated_residuals = image_latents
+        print("Residual generation complete.")
         return generated_residuals

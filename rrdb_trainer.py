@@ -41,10 +41,10 @@ class BasicRRDBNetTrainer:
         self.checkpoint_dir = None
         self.log_dir = None
         
-        print(f"BasicRRDBNetTrainer initialized for device: {self.device}") 
-        print(f"Model Config: {self.model_config}") 
-        print(f"Optimizer Config: {self.optimizer_config}") 
-        print(f"Scheduler Config: {self.scheduler_config}") 
+        print(f"BasicRRDBNetTrainer initialized for device: {self.device}") # write message on console
+        print(f"Model Config: {self.model_config}") # write message on console
+        print(f"Optimizer Config: {self.optimizer_config}") # write message on console
+        print(f"Scheduler Config: {self.scheduler_config}") # write message on console
 
     def _build_model(self):
         model = RRDBNet(
@@ -73,24 +73,24 @@ class BasicRRDBNetTrainer:
         scheduler_type = self.scheduler_config.get('type', 'none').lower() 
         
         if scheduler_type == 'none':
-            print("No learning rate scheduler will be used.") 
+            print("No learning rate scheduler will be used.") # write message on console
             return None
         
-        print(f"Building scheduler of type: {scheduler_type}") 
+        print(f"Building scheduler of type: {scheduler_type}") # write message on console
         if scheduler_type == 'steplr':
             step_size = self.scheduler_config.get('step_lr_step_size', 200000) 
             gamma = self.scheduler_config.get('step_lr_gamma', 0.5)
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer_to_schedule,
                                                         step_size=step_size, 
                                                         gamma=gamma)
-            print(f"  StepLR configured with step_size={step_size}, gamma={gamma}") 
+            print(f"  StepLR configured with step_size={step_size}, gamma={gamma}") # write message on console
         elif scheduler_type == 'cosineannealinglr':
             t_max = self.scheduler_config.get('cosine_t_max', 100) 
             eta_min = self.scheduler_config.get('cosine_eta_min', 0.0)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_to_schedule, 
                                                                     T_max=t_max, 
                                                                     eta_min=eta_min)
-            print(f"  CosineAnnealingLR configured with T_max={t_max}, eta_min={eta_min}") 
+            print(f"  CosineAnnealingLR configured with T_max={t_max}, eta_min={eta_min}") # write message on console
         elif scheduler_type == 'cosineannealingwarmrestarts':
             t_0 = self.scheduler_config.get('cosine_warm_t_0', 10) 
             t_mult = self.scheduler_config.get('cosine_warm_t_mult', 1) 
@@ -99,7 +99,7 @@ class BasicRRDBNetTrainer:
                                                                              T_0=t_0,
                                                                              T_mult=t_mult,
                                                                              eta_min=eta_min)
-            print(f"  CosineAnnealingWarmRestarts configured with T_0={t_0}, T_mult={t_mult}, eta_min={eta_min}") 
+            print(f"  CosineAnnealingWarmRestarts configured with T_0={t_0}, T_mult={t_mult}, eta_min={eta_min}") # write message on console
         elif scheduler_type == 'reducelronplateau':
             mode = self.scheduler_config.get('plateau_mode', 'min')
             factor = self.scheduler_config.get('plateau_factor', 0.1)
@@ -110,9 +110,9 @@ class BasicRRDBNetTrainer:
                                                                    factor=factor,
                                                                    patience=patience,
                                                                    verbose=verbose)
-            print(f"  ReduceLROnPlateau configured with mode={mode}, factor={factor}, patience={patience}") 
+            print(f"  ReduceLROnPlateau configured with mode={mode}, factor={factor}, patience={patience}") # write message on console
         else:
-            print(f"Warning: Scheduler type '{scheduler_type}' not recognized. No scheduler will be used.") 
+            print(f"Warning: Scheduler type '{scheduler_type}' not recognized. No scheduler will be used.") # write message on console
             return None
         return scheduler
 
@@ -135,9 +135,9 @@ class BasicRRDBNetTrainer:
         self.writer = SummaryWriter(self.log_dir)
         self.best_checkpoint_path = os.path.join(self.checkpoint_dir, 'rrdb_model_best.pth') 
         
-        print(f"Basic RRDBNet (Standalone) - Logging to: {self.log_dir}") 
-        print(f"Basic RRDBNet (Standalone) - Saving checkpoints to: {self.checkpoint_dir}") 
-        print(f"Basic RRDBNet (Standalone) - Best model will be saved to: {self.best_checkpoint_path}") 
+        print(f"Basic RRDBNet (Standalone) - Logging to: {self.log_dir}") # write message on console
+        print(f"Basic RRDBNet (Standalone) - Saving checkpoints to: {self.checkpoint_dir}") # write message on console
+        print(f"Basic RRDBNet (Standalone) - Best model will be saved to: {self.best_checkpoint_path}") # write message on console
 
     def _perform_one_batch_step(self, batch_data, predict_residual=False, is_training=True):
         img_lr, _, img_hr, img_res = batch_data 
@@ -159,7 +159,7 @@ class BasicRRDBNetTrainer:
         total_val_loss = 0.0
         num_val_batches = 0
         
-        print(f"\nRunning validation for RRDBNet epoch {epoch+1}...") 
+        print(f"\nRunning validation for RRDBNet epoch {epoch+1}...") # write message on console
         progress_bar_val = tqdm(total=len(val_loader), desc=f"Validation RRDBNet Epoch {epoch+1}")
 
         with torch.no_grad(): 
@@ -173,7 +173,7 @@ class BasicRRDBNetTrainer:
         progress_bar_val.close()
         avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else float('nan')
         
-        print(f"Epoch {epoch+1} Average Validation Loss (RRDBNet): {avg_val_loss:.4f}") 
+        print(f"Epoch {epoch+1} Average Validation Loss (RRDBNet): {avg_val_loss:.4f}") # write message on console
         if self.writer:
             self.writer.add_scalar('Validation/Loss_epoch_avg', avg_val_loss, epoch + 1)
             
@@ -201,11 +201,11 @@ class BasicRRDBNetTrainer:
                 data_loader_for_samples = val_loader
                 source_name = "Validation"
             except StopIteration:
-                print("Warning: val_loader is empty. Falling back to train_loader for image logging.") 
+                print("Warning: val_loader is empty. Falling back to train_loader for image logging.") # write message on console
                 data_loader_for_samples = train_loader
                 source_name = "Training"
             except Exception as e: # Catch other potential errors with val_loader
-                print(f"Warning: Error with val_loader ({e}). Falling back to train_loader for image logging.") 
+                print(f"Warning: Error with val_loader ({e}). Falling back to train_loader for image logging.") # write message on console
                 data_loader_for_samples = train_loader
                 source_name = "Training"
         else:
@@ -213,14 +213,14 @@ class BasicRRDBNetTrainer:
             source_name = "Training"
 
         if not data_loader_for_samples:
-            print("Warning: No data loader available for image logging.") 
+            print("Warning: No data loader available for image logging.") # write message on console
             self.model.train()
             return
 
         try:
             sample_batch = next(iter(data_loader_for_samples))
         except StopIteration:
-            print(f"Warning: Could not get a sample batch from {source_name} loader for image logging.") 
+            print(f"Warning: Could not get a sample batch from {source_name} loader for image logging.") # write message on console
             self.model.train() 
             return
 
@@ -256,7 +256,7 @@ class BasicRRDBNetTrainer:
             self.writer.add_image(f'Samples_from_{source_name}/01_Input_LR', grid_lr, epoch + 1)
             self.writer.add_image(f'Samples_from_{source_name}/02_{predicted_name}', grid_predicted, epoch + 1)
             self.writer.add_image(f'Samples_from_{source_name}/03_{target_name}', grid_target, epoch + 1)
-            print(f"Logged sample RRDB images from {source_name} set to TensorBoard for epoch {epoch + 1}.") 
+            print(f"Logged sample RRDB images from {source_name} set to TensorBoard for epoch {epoch + 1}.") # write message on console
         
         self.model.train() 
 
@@ -281,14 +281,14 @@ class BasicRRDBNetTrainer:
             self.best_loss = initial_best_loss_from_resume 
             self.batch_step_counter = self.start_epoch * len(train_loader) 
         
-        print(f"Starting BasicRRDBNet training from epoch {self.start_epoch + 1}/{epochs} on device: {self.device}") 
-        print(f"Accumulation steps: {accumulation_steps}") 
+        print(f"Starting BasicRRDBNet training from epoch {self.start_epoch + 1}/{epochs} on device: {self.device}") # write message on console
+        print(f"Accumulation steps: {accumulation_steps}") # write message on console
         if val_loader:
-            print(f"Validation will be performed every {val_every_n_epochs} epoch(s).") 
-            print(f"Initial best tracked loss (from resume or inf): {self.best_loss:.6f}") 
+            print(f"Validation will be performed every {val_every_n_epochs} epoch(s).") # write message on console
+            print(f"Initial best tracked loss (from resume or inf): {self.best_loss:.6f}") # write message on console
         else:
-            print("No validation loader provided. 'best_loss' will track training loss.") 
-            print(f"Initial best training loss (from resume or inf): {self.best_loss:.6f}") 
+            print("No validation loader provided. 'best_loss' will track training loss.") # write message on console
+            print(f"Initial best training loss (from resume or inf): {self.best_loss:.6f}") # write message on console
 
         current_accumulation_idx = 0
         if self.start_epoch == 0: 
@@ -331,7 +331,7 @@ class BasicRRDBNetTrainer:
             
             progress_bar.close()
             mean_train_loss_epoch = epoch_total_train_loss / num_batches_in_epoch if num_batches_in_epoch > 0 else float('nan')
-            print(f"Epoch {epoch+1} Average Training Loss (RRDBNet): {mean_train_loss_epoch:.4f}") 
+            print(f"Epoch {epoch+1} Average Training Loss (RRDBNet): {mean_train_loss_epoch:.4f}") # write message on console
             if self.writer:
                 self.writer.add_scalar('Train/Loss_epoch_avg', mean_train_loss_epoch, epoch + 1)
                 if self.optimizer.param_groups:
@@ -353,7 +353,7 @@ class BasicRRDBNetTrainer:
                     log_msg += f"validation loss: {self.best_loss:.4f}"
                 else:
                     log_msg += f"training loss: {self.best_loss:.4f}"
-                print(f"Epoch {epoch+1}: {log_msg} to {self.best_checkpoint_path}") 
+                print(f"Epoch {epoch+1}: {log_msg} to {self.best_checkpoint_path}") # write message on console
             
             if (epoch + 1) % save_every_n_epochs == 0 or (epoch + 1) == epochs:
                 if not (current_loss_for_best_comparison == self.best_loss and self.best_checkpoint_path == os.path.join(self.checkpoint_dir, f'rrdb_model_epoch_{epoch+1}.pth')):
@@ -363,35 +363,35 @@ class BasicRRDBNetTrainer:
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     metric_for_plateau = current_loss_for_best_comparison if is_current_loss_validation else mean_train_loss_epoch
                     self.scheduler.step(metric_for_plateau)
-                    print(f"ReduceLROnPlateau scheduler stepped with metric {metric_for_plateau:.4f}. New LR: {self.optimizer.param_groups[0]['lr']:.2e}") 
+                    print(f"ReduceLROnPlateau scheduler stepped with metric {metric_for_plateau:.4f}. New LR: {self.optimizer.param_groups[0]['lr']:.2e}") # write message on console
                 elif not isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR): 
                     self.scheduler.step()
-                    print(f"Epoch-based scheduler ({type(self.scheduler).__name__}) stepped. New LR: {self.optimizer.param_groups[0]['lr']:.2e}") 
+                    print(f"Epoch-based scheduler ({type(self.scheduler).__name__}) stepped. New LR: {self.optimizer.param_groups[0]['lr']:.2e}") # write message on console
             
             if self.writer:
                 self._log_rrdb_sample_images(train_loader, val_loader, epoch, predict_residual)
 
 
         if current_accumulation_idx > 0:
-            print(f"Performing final optimizer step for {current_accumulation_idx} accumulated gradients...") 
+            print(f"Performing final optimizer step for {current_accumulation_idx} accumulated gradients...") # write message on console
             self.optimizer.step()
             if self.scheduler and isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR):
                  self.scheduler.step()
             self.optimizer.zero_grad()
             self.global_step_optimizer +=1
-            print(f"Final gradients applied. Total optimizer steps: {self.global_step_optimizer}") 
+            print(f"Final gradients applied. Total optimizer steps: {self.global_step_optimizer}") # write message on console
 
         if self.writer:
             self.writer.close()
-        print(f"BasicRRDBNet training finished. Final best tracked loss: {self.best_loss:.4f}") 
+        print(f"BasicRRDBNet training finished. Final best tracked loss: {self.best_loss:.4f}") # write message on console
         if val_loader:
-            print("(This was the best validation loss if validation was performed.)") 
+            print("(This was the best validation loss if validation was performed.)") # write message on console
         else:
-            print("(This was the best training loss as no validation was performed.)") 
+            print("(This was the best training loss as no validation was performed.)") # write message on console
 
     def save_checkpoint(self, epoch, loss_value, is_best_model=False, is_validation_loss=False): 
         if not self.checkpoint_dir:
-            print("Warning: Checkpoint directory not set. Skipping save.") 
+            print("Warning: Checkpoint directory not set. Skipping save.") # write message on console
             return
 
         if is_best_model:
@@ -422,7 +422,7 @@ class BasicRRDBNetTrainer:
         else:
             log_msg += " (Training)"
         log_msg += ")"
-        print(log_msg) 
+        print(log_msg) # write message on console
 
     def load_checkpoint_for_resume(self, checkpoint_path: str):
         start_epoch_res = 0
@@ -430,52 +430,52 @@ class BasicRRDBNetTrainer:
         loaded_loss_metric_from_checkpoint = float('inf') 
 
         if not os.path.isfile(checkpoint_path):
-            print(f"Resume checkpoint not found at {checkpoint_path}. Training will start from scratch.") 
+            print(f"Resume checkpoint not found at {checkpoint_path}. Training will start from scratch.") # write message on console
             return start_epoch_res, global_step_optimizer_res, loaded_loss_metric_from_checkpoint
 
-        print(f"Loading checkpoint for resume from: {checkpoint_path}") 
+        print(f"Loading checkpoint for resume from: {checkpoint_path}") # write message on console
         try:
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
             
             loaded_trainer_configs = checkpoint.get('trainer_configs')
             if loaded_trainer_configs:
-                print(f"Checkpoint was saved with trainer configs: {loaded_trainer_configs}") 
+                print(f"Checkpoint was saved with trainer configs: {loaded_trainer_configs}") # write message on console
                 if self.model_config != loaded_trainer_configs.get('model_config'):
-                    print("WARNING: Model configuration in checkpoint differs from current trainer's model configuration.") 
+                    print("WARNING: Model configuration in checkpoint differs from current trainer's model configuration.") # write message on console
 
             if 'model_state_dict' in checkpoint:
                 self.model.to(self.device)
                 incompatible_keys = self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-                if incompatible_keys.missing_keys: print(f"Resume Warning: Missing keys in model state_dict: {incompatible_keys.missing_keys}") 
-                if incompatible_keys.unexpected_keys: print(f"Resume Info: Unexpected keys in model state_dict from checkpoint: {incompatible_keys.unexpected_keys}") 
-                print("Model state loaded.") 
+                if incompatible_keys.missing_keys: print(f"Resume Warning: Missing keys in model state_dict: {incompatible_keys.missing_keys}") # write message on console
+                if incompatible_keys.unexpected_keys: print(f"Resume Info: Unexpected keys in model state_dict from checkpoint: {incompatible_keys.unexpected_keys}") # write message on console
+                print("Model state loaded.") # write message on console
             
             if 'optimizer_state_dict' in checkpoint and self.optimizer:
                 self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 for state in self.optimizer.state.values():
                     for k, v_opt in state.items():
                         if isinstance(v_opt, torch.Tensor): state[k] = v_opt.to(self.device)
-                print("Optimizer state loaded.") 
+                print("Optimizer state loaded.") # write message on console
             
             if 'scheduler_state_dict' in checkpoint and self.scheduler:
                 try:
                     self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                    print("Scheduler state loaded.") 
+                    print("Scheduler state loaded.") # write message on console
                 except Exception as e_sched_load:
-                    print(f"Warning: Could not load scheduler state: {e_sched_load}. Scheduler may start fresh.") 
+                    print(f"Warning: Could not load scheduler state: {e_sched_load}. Scheduler may start fresh.") # write message on console
 
             start_epoch_res = checkpoint.get('epoch', -1) + 1 
             global_step_optimizer_res = checkpoint.get('global_step_optimizer', 0)
             
             loaded_loss_metric_from_checkpoint = checkpoint.get('current_best_tracked_loss', checkpoint.get('loss', float('inf')))
             
-            print(f"Resuming training from epoch {start_epoch_res}, Optimizer steps: {global_step_optimizer_res}") 
-            print(f"Loaded 'current_best_tracked_loss' (or 'loss') from checkpoint: {loaded_loss_metric_from_checkpoint:.4f}") 
+            print(f"Resuming training from epoch {start_epoch_res}, Optimizer steps: {global_step_optimizer_res}") # write message on console
+            print(f"Loaded 'current_best_tracked_loss' (or 'loss') from checkpoint: {loaded_loss_metric_from_checkpoint:.4f}") # write message on console
             if 'is_validation_loss' in checkpoint:
-                print(f"  The 'loss' value in the loaded checkpoint was a {'validation' if checkpoint['is_validation_loss'] else 'training'} loss.") 
+                print(f"  The 'loss' value in the loaded checkpoint was a {'validation' if checkpoint['is_validation_loss'] else 'training'} loss.") # write message on console
 
         except Exception as e:
-            print(f"Error loading checkpoint for resume: {e}. Training will start from scratch.") 
+            print(f"Error loading checkpoint for resume: {e}. Training will start from scratch.") # write message on console
             start_epoch_res = 0
             global_step_optimizer_res = 0
             loaded_loss_metric_from_checkpoint = float('inf')
@@ -494,7 +494,7 @@ class BasicRRDBNetTrainer:
         sr_scale_val = model_config.get('sr_scale', 4)
 
         if nf is None or nb is None or sr_scale_val is None: 
-            raise ValueError("model_config must contain 'num_feat', 'num_block', and 'sr_scale'.") 
+            raise ValueError("model_config must contain 'num_feat', 'num_block', and 'sr_scale'.") # write message on console
 
         model = RRDBNet(
             in_channels=in_nc_val, 
@@ -507,10 +507,10 @@ class BasicRRDBNetTrainer:
         model.to(device)
 
         if not os.path.isfile(model_path):
-            print(f"Evaluation model checkpoint not found at {model_path}. Returning uninitialized model in eval mode.") 
+            print(f"Evaluation model checkpoint not found at {model_path}. Returning uninitialized model in eval mode.") # write message on console
             return model.eval()
 
-        print(f"Loading model for evaluation from: {model_path}") 
+        print(f"Loading model for evaluation from: {model_path}") # write message on console
         checkpoint = torch.load(model_path, map_location=device)
         
         state_dict_to_load = None
@@ -522,11 +522,11 @@ class BasicRRDBNetTrainer:
         if state_dict_to_load:
             incompatible_keys = model.load_state_dict(state_dict_to_load, strict=False)
             if incompatible_keys.missing_keys:
-                print(f"Eval Load Warning: Missing keys in model: {incompatible_keys.missing_keys}") 
+                print(f"Eval Load Warning: Missing keys in model: {incompatible_keys.missing_keys}") # write message on console
             if incompatible_keys.unexpected_keys:
-                print(f"Eval Load Info: Unexpected keys in checkpoint: {incompatible_keys.unexpected_keys}") 
-            print("Model weights loaded successfully for evaluation.") 
+                print(f"Eval Load Info: Unexpected keys in checkpoint: {incompatible_keys.unexpected_keys}") # write message on console
+            print("Model weights loaded successfully for evaluation.") # write message on console
         else:
-            print(f"Failed to load model weights for evaluation from {model_path}. Checkpoint format might be incorrect.") 
+            print(f"Failed to load model weights for evaluation from {model_path}. Checkpoint format might be incorrect.") # write message on console
             
         return model.eval()

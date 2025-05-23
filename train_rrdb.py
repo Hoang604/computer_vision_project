@@ -1,10 +1,8 @@
 import torch
-# import torch.nn.functional as F # Not directly used in this script
 from torch.utils.data import DataLoader
-# from torch.utils.tensorboard import SummaryWriter # Handled by trainer
 from rrdb_trainer import BasicRRDBNetTrainer 
 import argparse
-from utils.dataset import ImageDataset # Or your appropriate dataset module
+from utils.dataset import ImageDatasetBicubic # Or your appropriate dataset module
 import os # For checking if val_image_folder exists
 
 def train_rrdb_main(args):
@@ -24,7 +22,7 @@ def train_rrdb_main(args):
     print(f"Using device: {device}") 
 
     # --- Prepare Training Dataset and DataLoader ---
-    train_dataset = ImageDataset(folder_path=args.image_folder, 
+    train_dataset = ImageDatasetBicubic(preprocessed_folder_path=args.image_folder, 
                                  img_size=args.img_size, 
                                  downscale_factor=args.downscale_factor)
     print(f"Loaded {len(train_dataset)} training images from {args.image_folder}") 
@@ -44,7 +42,7 @@ def train_rrdb_main(args):
         if not os.path.isdir(args.val_image_folder):
             print(f"Warning: Validation image folder not found: {args.val_image_folder}. Proceeding without validation.") 
         else:
-            val_dataset = ImageDataset(folder_path=args.val_image_folder,
+            val_dataset = ImageDatasetBicubic(preprocessed_folder_path=args.val_image_folder,
                                        img_size=args.img_size, # Use same img_size for consistency
                                        downscale_factor=args.downscale_factor) # Use same downscale_factor
             if len(val_dataset) > 0:
@@ -137,8 +135,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train RRDBNet Model with Advanced Schedulers and Validation")
     
     # Dataset and Model args
-    parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/images160x160/", help='Path to the image folder for HR images')
-    parser.add_argument('--val_image_folder', type=str, default=None, help='Path to the validation image folder for HR images (optional)')
+    parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/160/train/bicubic/", help='Path to the image folder for HR images')
+    parser.add_argument('--val_image_folder', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/160/validation/bicubic', help='Path to the validation image folder for HR images (optional)')
     parser.add_argument('--img_size', type=int, default=160, help='Target HR image size')
     parser.add_argument('--img_channels', type=int, default=3, help='Number of image channels')
     parser.add_argument('--downscale_factor', type=int, default=4, help='Factor to downscale HR to get LR (determines sr_scale)')
@@ -149,7 +147,7 @@ if __name__ == "__main__":
     
     # Training args
     parser.add_argument('--device', type=str, default='cuda:1', help='Device to train on (e.g., cuda, cpu)')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=60, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=64, help='Training batch size')
     parser.add_argument('--val_batch_size', type=int, default=64, help='Validation batch size')
     parser.add_argument('--val_every_n_epochs', type=int, default=1, help='Frequency (in epochs) to run validation')

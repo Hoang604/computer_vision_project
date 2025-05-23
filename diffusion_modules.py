@@ -72,8 +72,7 @@ class BasicTransformerBlock(nn.Module):
         )
         self.g_self = nn.Parameter(torch.zeros(1)) # Rezero parameter for self-attention
 
-        # Cross-Attention Layer (will be used conditionally)
-        # We define it here, but only use it in forward if context is not None
+        # Cross-Attention Layer
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=dim,        # Query dimension (from image features x)
             kdim=context_dim,     # Key dimension (from context)
