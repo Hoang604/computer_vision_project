@@ -204,10 +204,10 @@ if __name__ == "__main__":
 
     # Dataset args
     parser.add_argument('--preprocessed_data_folder', type=str,
-                        default='/media/tuannl1/heavy_weight/data/cv_data/celeba160x160/train/rrdb',
+                        default=None,
                         help='Path to the folder containing preprocessed tensors (LR, HR_RRDB, HR_Orig).')
     parser.add_argument('--val_preprocessed_data_folder', type=str,
-                        default='/media/tuannl1/heavy_weight/data/cv_data/celeba160x160/validation/rrdb',
+                        default=None,
                         help='Path to the folder containing preprocessed validation tensors (optional).')
 
     parser.add_argument('--img_size', type=int, default=160,
@@ -274,7 +274,7 @@ if __name__ == "__main__":
 
     # RRDBNet (Context Extractor) args
     parser.add_argument('--rrdb_weights_path_context_extractor', type=str,
-                        default='/home/hoangdv/cv_project/checkpoints_rrdb/rrdb_20250521-141800/rrdb_model_best.pth',
+                        default='None',
                         help='Path to pre-trained RRDBNet weights used as the on-the-fly context extractor for U-Net.')
     parser.add_argument('--rrdb_num_block_context', type=int, default=17, # Must match the context extractor RRDBNet's architecture AND U-Net's expectation
                         help='Number of RRDB blocks (nb) in the context extractor RRDBNet.')
@@ -286,9 +286,9 @@ if __name__ == "__main__":
     # Logging/Saving args
     parser.add_argument('--weights_path_unet', type=str, default=None,
                         help='Path to pre-trained UNet model weights to resume training.')
-    parser.add_argument('--base_log_dir', type=str, default='./logs_diffusion_v3',
+    parser.add_argument('--base_log_dir', type=str, default='logs/diffusion',
                         help='Base directory for TensorBoard logging.')
-    parser.add_argument('--base_checkpoint_dir', type=str, default='./checkpoints_diffusion_v3',
+    parser.add_argument('--base_checkpoint_dir', type=str, default='checkpoints/diffusion',
                         help='Base directory for saving model checkpoints.')
     parser.add_argument('--continue_log_dir', type=str, default=None,
                         help='Specific log directory to continue (resumes experiment).')

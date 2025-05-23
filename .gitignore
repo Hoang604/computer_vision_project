@@ -3,12 +3,9 @@ output
 __pycache__
 scp.py
 .env
-rrdb_logs/
-rrdb_checkpoints/
-diffusion_logs/
-diffusion_checkpoints/
-checkpoints_rrdb/
-logs_rrdb/
+logs/
+checkpoints/
+preprocessed_data/
 result.png
 *.png
 *.__pyc

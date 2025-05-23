@@ -135,8 +135,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train RRDBNet Model with Advanced Schedulers and Validation")
     
     # Dataset and Model args
-    parser.add_argument('--image_folder', type=str, default="/media/tuannl1/heavy_weight/data/cv_data/160/train/bicubic/", help='Path to the image folder for HR images')
-    parser.add_argument('--val_image_folder', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/160/validation/bicubic', help='Path to the validation image folder for HR images (optional)')
+    parser.add_argument('--image_folder', type=str, default=None, help='Path to the image folder for HR images')
+    parser.add_argument('--val_image_folder', type=str, default=None, help='Path to the validation image folder for HR images (optional)')
     parser.add_argument('--img_size', type=int, default=160, help='Target HR image size')
     parser.add_argument('--img_channels', type=int, default=3, help='Number of image channels')
     parser.add_argument('--downscale_factor', type=int, default=4, help='Factor to downscale HR to get LR (determines sr_scale)')
@@ -176,8 +176,8 @@ if __name__ == "__main__":
     
     # Logging/Saving args
     parser.add_argument('--exp_name', type=str, default=None, help='Experiment name for subdirectories (e.g., rrdb_cosine_run1)')
-    parser.add_argument('--base_log_dir', type=str, default='logs_rrdb', help='Base directory for logging')
-    parser.add_argument('--base_checkpoint_dir', type=str, default='checkpoints_rrdb', help='Base directory for saving checkpoints')
+    parser.add_argument('--base_log_dir', type=str, default='logs/rrdb', help='Base directory for logging')
+    parser.add_argument('--base_checkpoint_dir', type=str, default='checkpoints/rrdb', help='Base directory for saving checkpoints')
     parser.add_argument('--continue_log_dir', type=str, default=None, help='Specific directory to continue logging')
     parser.add_argument('--continue_checkpoint_dir', type=str, default=None, help='Specific directory to continue saving checkpoints')
     parser.add_argument('--weights_path', type=str, default=None, help='Path to pre-trained model weights to resume training')

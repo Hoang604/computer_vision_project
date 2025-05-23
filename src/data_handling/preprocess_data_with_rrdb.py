@@ -143,9 +143,9 @@ def preprocess_images_batched_rrdb_no_features(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Preprocess images with a single RRDBNet for Upscaling ONLY (No Feature Saving)")
-    parser.add_argument('--input_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/celeba160x160/test',
+    parser.add_argument('--input_dir', type=str, default='data/hr_images',
                         help='Directory containing original high-resolution images (assumed to be at target img_size).')
-    parser.add_argument('--output_dir', type=str, default='/media/tuannl1/heavy_weight/data/cv_data/celeba160x160/test/rrdb',
+    parser.add_argument('--output_dir', type=str, default='preprocessed_data/rrdb_processed_train',
                         help='Directory to save preprocessed PyTorch tensors (.pt files), excluding features.')
 
     # Common image parameters
@@ -157,7 +157,7 @@ if __name__ == "__main__":
                         help='Factor to downscale HR to get LR. This is also the sr_scale for the RRDBNet upscaler.')
 
     # RRDBNet configuration (used for upscaling ONLY)
-    parser.add_argument('--rrdb_weights_path_for_upscaling', type=str, default='/home/hoangdv/cv_project/checkpoints_rrdb/rrdb_20250521-141800/rrdb_model_best.pth',
+    parser.add_argument('--rrdb_weights_path_for_upscaling', type=str, default='checkpoints/rrdb/rrdb_model_best.pth',
                         help='Path to the pre-trained RRDBNet weights (.pth file) used for upscaling LR to HR_RRDB.')
     parser.add_argument('--rrdb_num_feat', type=int, default=64,
                         help='Number of features (nf) in the RRDBNet upscaler.')

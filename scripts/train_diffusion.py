@@ -166,7 +166,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Diffusion Model with LR Scheduler Support")
     # Dataset args
     parser.add_argument('--image_folder', type=str, 
-                        default="/media/tuannl1/heavy_weight/data/cv_data/images160x160", 
+                        default=None, 
                         help='Path to the image folder (HR images)')
     parser.add_argument('--img_size', type=int, default=160, 
                         help='Target image size for HR')
@@ -236,9 +236,9 @@ if __name__ == "__main__":
     # Logging/Saving args
     parser.add_argument('--weights_path_unet', type=str, default=None, 
                         help='Path to pre-trained UNet model weights to resume training')
-    parser.add_argument('--base_log_dir', type=str, default='./cv_logs_diffusion', 
+    parser.add_argument('--base_log_dir', type=str, default='logs/diffusion', 
                         help='Base directory for TensorBoard logging')
-    parser.add_argument('--base_checkpoint_dir', type=str, default='./cv_checkpoints_diffusion', 
+    parser.add_argument('--base_checkpoint_dir', type=str, default='checkpoints/diffusion', 
                         help='Base directory for saving model checkpoints')
     parser.add_argument('--continue_log_dir', type=str, default=None, 
                         help='Specific log directory to continue (resumes experiment)')
