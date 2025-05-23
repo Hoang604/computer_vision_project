@@ -1,8 +1,8 @@
 import torch
 from torch.utils.data import DataLoader
-from rrdb_trainer import BasicRRDBNetTrainer 
+from src.trainers.rrdb_trainer import BasicRRDBNetTrainer 
 import argparse
-from utils.dataset import ImageDatasetBicubic # Or your appropriate dataset module
+from src.data_handling import ImageDatasetBicubic # Or your appropriate dataset module
 import os # For checking if val_image_folder exists
 
 def train_rrdb_main(args):

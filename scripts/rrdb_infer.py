@@ -1,5 +1,5 @@
-from rrdb_trainer import BasicRRDBNetTrainer
-from utils.dataset import ImageDataset
+from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
+from src.data_handling.dataset import ImageDataset
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import List

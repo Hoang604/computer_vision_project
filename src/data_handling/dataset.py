@@ -4,7 +4,7 @@ import torch
 from PIL import Image
 import os
 import torchvision.transforms.functional as TF
-from bicubic import upscale_image
+from src.utils.bicubic import upscale_image
 
 
 class ImageDataset(Dataset):

@@ -1,11 +1,11 @@
 import torch
 from torch.utils.data import DataLoader
-from utils.dataset import ImageDatasetRRDB
+from src.data_handling.dataset import ImageDatasetRRDB
 import os
 import argparse
-from diffusion_modules import Unet 
-from diffusion_trainer import DiffusionTrainer
-from rrdb_trainer import BasicRRDBNetTrainer 
+from src.diffusion_modules.unet import Unet 
+from src.trainers.diffusion_trainer import DiffusionTrainer
+from src.trainers.rrdb_trainer import BasicRRDBNetTrainer 
 
 def train_diffusion(args):
     """

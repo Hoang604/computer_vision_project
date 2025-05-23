@@ -2,14 +2,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.utils import make_grid # Import for image logging
+from torchvision.utils import make_grid
 from tqdm import tqdm
 import os
 import datetime
 import numpy as np
-
-# Import RRDBNet from your modules
-from diffusion_modules import RRDBNet # OR models.diffsr_modules import RRDBNet
+from src.diffusion_modules.rrdb import RRDBNet
 
 
 class BasicRRDBNetTrainer:

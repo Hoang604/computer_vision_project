@@ -1,9 +1,9 @@
-from diffusion_trainer import DiffusionTrainer, ResidualGenerator
-from utils.dataset import ImageDatasetRRDB
+from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
+from src.data_handling.dataset import ImageDatasetRRDB
 import matplotlib.pyplot as plt
-from rrdb_trainer import BasicRRDBNetTrainer
+from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 import numpy as np
-from diffusion_modules import Unet
+from src.diffusion_modules.unet import Unet
 
 def plot_result(imgs):
     lr, up, diff_res, con = imgs

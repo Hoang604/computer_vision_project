@@ -9,7 +9,7 @@ import traceback # Import traceback for detailed error printing
 # Import necessary classes from your repository
 try:
     # We need upscale_image from bicubic.py
-    from bicubic import upscale_image # [bicubic.py is a user uploaded file]
+    from src.utils.bicubic import upscale_image # [bicubic.py is a user uploaded file]
 except ImportError:
     print("Please ensure bicubic.py is in the PYTHONPATH or the same directory.") 
     exit(1)

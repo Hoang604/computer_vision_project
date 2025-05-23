@@ -4,15 +4,10 @@ from torch.utils.tensorboard import SummaryWriter # Use PyTorch's TensorBoard
 import numpy as np
 from tqdm import tqdm
 import os
-# import bitsandbytes as bnb # Commented out as it's not used in the provided snippet, can be re-enabled if 8-bit Adam is used
 import datetime
 from diffusers import DDIMScheduler # Keep this import
 from torch.utils.data import DataLoader # For type hinting
-# from diffusion_modules import Unet # For type hinting, assuming Unet is defined elsewhere
 
-# Assuming ResidualGenerator is defined in this file or imported.
-# If it's in another file, ensure it's imported correctly.
-# For this modification, we primarily focus on DiffusionTrainer.
 
 class DiffusionTrainer:
     """

@@ -13,7 +13,7 @@ try:
     print(f"Adding parent directory to sys.path: {parent_dir}")
     if parent_dir not in sys.path:
         sys.path.append(parent_dir)
-    from rrdb_trainer import BasicRRDBNetTrainer
+    from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 except ImportError:
     print("Please ensure rrdb_trainer.py is in the PYTHONPATH or the project's root directory.")
     exit(1)
