@@ -82,7 +82,7 @@ def main():
     unet_use_attention = True
     unet_rrdb_num_blocks = 17
     unet_path = 'checkpoints/diffusion/noise_20250522-230250/diffusion_model_noise_20250522-230250_best.pth'
-    img_folder = '/media/tuannl1/heavy_weight/data/cv_data/celeba160x160/test/rrdb'
+    img_folder = 'preprocessed_data/rrdb_processed_train'
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")

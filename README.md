@@ -51,19 +51,19 @@ The project provides scripts for data preprocessing, model training, and inferen
         * `DiffusionTrainer`: Handles the DDPM/DDIM training loop, supporting "noise" and "v_prediction" modes.
         * `ResidualGenerator` (within `src/trainers/diffusion_trainer.py`): Used during inference (sampling) with a DDIM scheduler.
     * **Pipeline 1: Refining Bicubic Upscaling**
-        * Training (`scripts/train_diffusion.py`):
+        * Training (`scripts/train_diffusion_bicubic_refine.py`):
             * The U-Net learns to predict the residual (HR - Bicubic upscaled LR) or the noise to reverse the noising of this residual.
             * Conditioned on features extracted by an RRDBNet from the LR image (on-the-fly).
             * Uses `ImageDataset` for on-the-fly data generation (LR, Bicubic HR, HR - Bicubic residual).
         * Inference:
             * The provided `scripts/diffusion_infer.py` is primarily set up for Pipeline 2 (refining RRDBNet outputs using `ImageDatasetRRDB`).
-            * To perform inference for a model trained by `scripts/train_diffusion.py` (i.e., refining Bicubic on-the-fly), you would need to:
+            * To perform inference for a model trained by `scripts/train_diffusion_bicubic_refine.py` (i.e., refining Bicubic on-the-fly), you would need to:
                 * Adapt `scripts/diffusion_infer.py` to take an LR image, perform Bicubic upscaling, extract RRDBNet features from LR, and then use the U-Net to predict and add the residual to the Bicubic upscaled image.
                 * Alternatively, modify a script like `scripts/rrdb_infer.py` to also load the U-Net and apply the diffusion-based refinement after Bicubic upscaling.
     * **Pipeline 2: Refining RRDBNet Upscaling (Predicting RRDB Residual)**
         * Data Preprocessing (`src/data_handling/preprocess_data_with_rrdb.py`):
-            * Generates a dataset where each sample includes: LR image, HR image, HR image upscaled by a base RRDBNet. Note: The current `preprocess_data_with_rrdb.py` script in your upload (`preprocess_images_batched_rrdb_no_features`) saves LR, HR original, and HR_RRDB_upscaled, but *does not* pre-save LR features. LR features are extracted on-the-fly by the `context_extractor_model` during training with `scripts/train_diffusion_predict_rrdb_residual.py` and inference with `scripts/diffusion_infer.py`.
-        * Training (`scripts/train_diffusion_predict_rrdb_residual.py`):
+            * Generates a dataset where each sample includes: LR image, HR image, HR image upscaled by a base RRDBNet. Note: The current `preprocess_data_with_rrdb.py` script in your upload (`preprocess_images_batched_rrdb_no_features`) saves LR, HR original, and HR_RRDB_upscaled, but *does not* pre-save LR features. LR features are extracted on-the-fly by the `context_extractor_model` during training with `scripts/train_diffusion_rrdb_refine.py` and inference with `scripts/diffusion_infer.py`.
+        * Training (`scripts/train_diffusion_rrdb_refine.py`):
             * The U-Net learns to predict the residual (True HR - RRDB-upscaled HR) or the noise to reverse the noising of this residual.
             * Conditioned on features extracted on-the-fly by a context RRDBNet from the LR image.
             * Uses `ImageDatasetRRDB` to load preprocessed data (LR, HR_RRDB_upscaled, HR_Original).
@@ -125,8 +125,8 @@ computer_vision_project/
 ├── scripts/
 │   ├── diffusion_infer.py            # Inference for Diffusion Model (refining RRDBNet output)
 │   ├── rrdb_infer.py                 # Inference for standalone RRDBNet
-│   ├── train_diffusion.py            # Main script to train Diffusion Model (refining Bicubic)
-│   ├── train_diffusion_predict_rrdb_residual.py # Main script to train Diffusion Model (refining RRDBNet)
+│   ├── train_diffusion_bicubic_refine.py            # Main script to train Diffusion Model (refining Bicubic)
+│   ├── train_diffusion_rrdb_refine.py # Main script to train Diffusion Model (refining RRDBNet)
 │   └── train_rrdb.py                 # Main script to train RRDBNet
 │
 ├── requirements.txt                  # Python dependencies
@@ -162,15 +162,15 @@ computer_vision_project/
 
 ## Data Preparation
 
-### Option 1: On-the-fly Processing (for `scripts/train_diffusion.py`)
+### Option 1: On-the-fly Processing (for `scripts/train_diffusion_bicubic_refine.py`)
 
 * Place your high-resolution (HR) images in a directory (e.g., `data/my_hr_images/`).
-* The `ImageDataset` (defined in `src/data_handling/dataset.py`) used by `scripts/train_diffusion.py` will handle creating Low-Resolution (LR) images, Bicubic upscaled images, and the residual (HR - Bicubic upscaled) during data loading.
+* The `ImageDataset` (defined in `src/data_handling/dataset.py`) used by `scripts/train_diffusion_bicubic_refine.py` will handle creating Low-Resolution (LR) images, Bicubic upscaled images, and the residual (HR - Bicubic upscaled) during data loading.
 
 ### Option 2: Preprocessing for Advanced Pipelines
 
 #### Preprocessing with RRDBNet (using `src/data_handling/preprocess_data_with_rrdb.py`)
-This script is crucial for the "Diffusion Model Refining RRDBNet Upscaling" pipeline (`scripts/train_diffusion_predict_rrdb_residual.py` and `scripts/diffusion_infer.py`).
+This script is crucial for the "Diffusion Model Refining RRDBNet Upscaling" pipeline (`scripts/train_diffusion_rrdb_refine.py` and `scripts/diffusion_infer.py`).
 The current version (`preprocess_images_batched_rrdb_no_features` function within the script) saves:
     * Original HR images (resized to `img_size`).
     * LR images.
@@ -246,7 +246,7 @@ This pipeline trains a U-Net to predict the residual (HR - Bicubic upscaled LR) 
 
 **Example Command:**
 ```bash
-python -m scripts.train_diffusion \
+python -m scripts.train_diffusion_bicubic_refine \
     --image_folder data/my_hr_images/train \
     --img_size 160 \
     --downscale_factor 4 \
@@ -287,7 +287,7 @@ This pipeline trains a U-Net to predict the residual (True HR - RRDB-upscaled HR
 
 **Example Command:**
 ```bash
-python -m scripts.train_diffusion_predict_rrdb_residual \
+python -m scripts.train_diffusion_rrdb_refine \
     --preprocessed_data_folder preprocessed_data/rrdb_refined_train \
     --val_preprocessed_data_folder preprocessed_data/rrdb_refined_validation \
     --img_size 160 \
@@ -354,11 +354,11 @@ python -m scripts.diffusion_infer
 The script will load a random sample, perform inference, and plot/save the results.
 
 **Note on Refining Bicubic Upscaling (Inference):**
-As mentioned in "Implemented Models and Techniques", `scripts/diffusion_infer.py` is primarily for refining RRDB outputs. If you trained a model using `scripts/train_diffusion.py` (which refines Bicubic upscaling on-the-fly), you'll need to adapt an inference script. This would involve:
+As mentioned in "Implemented Models and Techniques", `scripts/diffusion_infer.py` is primarily for refining RRDB outputs. If you trained a model using `scripts/train_diffusion_bicubic_refine.py` (which refines Bicubic upscaling on-the-fly), you'll need to adapt an inference script. This would involve:
 1. Loading an LR image.
 2. Performing Bicubic upscaling.
 3. Using a context RRDBNet to extract features from the LR image.
-4. Using the U-Net (trained with `scripts/train_diffusion.py`) to predict the residual based on the Bicubic upscaled image and LR features.
+4. Using the U-Net (trained with `scripts/train_diffusion_bicubic_refine.py`) to predict the residual based on the Bicubic upscaled image and LR features.
 5. Adding this residual to the Bicubic upscaled image.
 
 ## Dependencies

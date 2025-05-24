@@ -816,6 +816,18 @@ class ResidualGenerator:
         self.predict_mode = predict_mode
 
         def cosine_beta_schedule(timesteps, s=0.008, dtype=torch.float32):
+            """
+            Generates a cosine noise schedule (betas).
+
+            Args:
+                timesteps (int): The number of timesteps.
+                s (float, optional): Small offset to prevent beta_t from being too small near t=0.
+                                     Defaults to 0.008.
+                dtype (torch.dtype, optional): Data type for the tensors. Defaults to torch.float32.
+
+            Returns:
+                torch.Tensor: The beta schedule.
+            """
             steps = timesteps + 1
             x = torch.linspace(0, timesteps, steps, dtype=dtype)
             alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
@@ -825,37 +837,46 @@ class ResidualGenerator:
 
         self.betas = cosine_beta_schedule(self.num_train_timesteps).to(self.device)
 
+        scheduler_prediction_type = 'v_prediction' if self.predict_mode == 'v_prediction' else 'epsilon'
+
         self.scheduler = DDIMScheduler(
             num_train_timesteps=self.num_train_timesteps,
             trained_betas=self.betas.cpu().numpy(),
             beta_schedule="trained_betas",
-            prediction_type=self.predict_mode if self.predict_mode == 'v_prediction' else 'epsilon' if self.predict_mode == 'noise' else 'sample',
+            prediction_type=scheduler_prediction_type,
             clip_sample=False,
             set_alpha_to_one=False,
             steps_offset=1,
         )
         print(f"ResidualGenerator initialized with {type(self.scheduler).__name__}, "
-              f"configured for model prediction_type='{self.predict_mode}'. "
+              f"configured for model prediction_type='{self.predict_mode}' (scheduler prediction_type='{scheduler_prediction_type}'). "
               f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.")
 
     @torch.no_grad()
-    def generate_residuals(self, model, features, num_images=1, num_inference_steps=50):
+    def generate_residuals(self, model, features, num_images=1, num_inference_steps=50, return_intermediate_steps=False):
         """
         Generates image residuals using the provided diffusion model and pre-extracted features.
+        Optionally returns all intermediate latents during the denoising process.
 
         Args:
             model (torch.nn.Module): The pre-trained diffusion model (e.g., a U-Net).
             features (list[torch.Tensor] or None): A list of pre-extracted feature tensors
                                                    to condition the U-Net. Each tensor in the list
                                                    should be batched [num_images, C_feat, H_feat, W_feat].
-                                                   Can be None if the model is unconditional (not typical for this project).
+                                                   Can be None if the model is unconditional.
             num_images (int, optional): Number of images/residuals to generate.
                                         Must match the batch size of `features` if provided. Defaults to 1.
             num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
+            return_intermediate_steps (bool, optional): If True, returns a list of all intermediate
+                                                        latents. Defaults to False.
 
         Returns:
-            torch.Tensor: A batch of generated residuals.
-                          Shape: [num_images, img_channels, img_size, img_size].
+            torch.Tensor or list[torch.Tensor]:
+                - If return_intermediate_steps is False: A batch of generated residuals.
+                  Shape: [num_images, img_channels, img_size, img_size].
+                - If return_intermediate_steps is True: A list of torch.Tensors, where each tensor
+                  represents the image latents at an intermediate denoising step. The last
+                  element in the list is the final generated residual.
         """
         model.eval()
         model.to(self.device)
@@ -872,16 +893,24 @@ class ResidualGenerator:
         )
         image_latents = image_latents * self.scheduler.init_noise_sigma
 
+        intermediate_latents_list = []
+        if return_intermediate_steps:
+            intermediate_latents_list.append(image_latents.clone())
+
         for t_step in tqdm(self.scheduler.timesteps, desc="Generating residuals"):
             model_input = image_latents
             t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device)
-
-            # U-Net prediction, conditioned on the provided features
             model_output = model(model_input, t_for_model, condition=features)
-
             scheduler_output = self.scheduler.step(model_output, t_step, image_latents)
             image_latents = scheduler_output.prev_sample
 
+            if return_intermediate_steps:
+                intermediate_latents_list.append(image_latents.clone())
+
         generated_residuals = image_latents
         print("Residual generation complete.")
-        return generated_residuals
+
+        if return_intermediate_steps:
+            return intermediate_latents_list
+        else:
+            return generated_residuals
