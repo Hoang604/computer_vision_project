@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer 
 import argparse
-from src.data_handling import ImageDatasetBicubic # Or your appropriate dataset module
+from src.data_handling.dataset import ImageDataset # Or your appropriate dataset module
 import os # For checking if val_image_folder exists
 
 def train_rrdb_main(args):
@@ -22,7 +22,7 @@ def train_rrdb_main(args):
     print(f"Using device: {device}") 
 
     # --- Prepare Training Dataset and DataLoader ---
-    train_dataset = ImageDatasetBicubic(preprocessed_folder_path=args.image_folder, 
+    train_dataset = ImageDataset(preprocessed_folder_path=args.image_folder, 
                                  img_size=args.img_size, 
                                  downscale_factor=args.downscale_factor)
     print(f"Loaded {len(train_dataset)} training images from {args.image_folder}") 
@@ -42,7 +42,7 @@ def train_rrdb_main(args):
         if not os.path.isdir(args.val_image_folder):
             print(f"Warning: Validation image folder not found: {args.val_image_folder}. Proceeding without validation.") 
         else:
-            val_dataset = ImageDatasetBicubic(preprocessed_folder_path=args.val_image_folder,
+            val_dataset = ImageDataset(preprocessed_folder_path=args.val_image_folder,
                                        img_size=args.img_size, # Use same img_size for consistency
                                        downscale_factor=args.downscale_factor) # Use same downscale_factor
             if len(val_dataset) > 0:

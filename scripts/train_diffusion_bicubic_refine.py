@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader
-from src.data_handling.dataset import ImageDatasetRRDB
+from src.data_handling.dataset import ImageDataset
 import os
 import argparse
 from src.diffusion_modules.unet import Unet 
@@ -30,7 +30,7 @@ def train_diffusion(args):
 
     # --- Setup Dataset and DataLoader ---
     print(f"Loading preprocessed data (LR, HR_RRDB, HR_Orig) from: {args.preprocessed_data_folder}")
-    train_dataset = ImageDatasetRRDB(
+    train_dataset = ImageDataset(
         preprocessed_folder_path=args.preprocessed_data_folder,
         img_size=args.img_size,
         downscale_factor=args.downscale_factor,
@@ -49,7 +49,7 @@ def train_diffusion(args):
     val_loader = None
     if args.val_preprocessed_data_folder:
         print(f"Loading validation data from: {args.val_preprocessed_data_folder}")
-        val_dataset = ImageDatasetRRDB(
+        val_dataset = ImageDataset(
             preprocessed_folder_path=args.val_preprocessed_data_folder,
             img_size=args.img_size,
             downscale_factor=args.downscale_factor,

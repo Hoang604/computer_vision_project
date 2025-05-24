@@ -478,7 +478,7 @@ class DiffusionTrainer:
 
 
     def train(self,
-                dataset: DataLoader,
+                train_dataset: DataLoader,
                 model: torch.nn.Module,
                 optimizer,
                 scheduler=None,
@@ -505,7 +505,7 @@ class DiffusionTrainer:
         )
 
         global_step_optimizer, batch_step_counter, current_accumulation_idx = self._initialize_training_steps(
-            start_epoch, len(dataset), accumulation_steps
+            start_epoch, len(train_dataset), accumulation_steps
         )
 
         current_best_val_loss_tracker = best_loss
@@ -525,10 +525,10 @@ class DiffusionTrainer:
             print(f"\nEpoch {epoch+1}/{epochs}")
             model.train()
 
-            progress_bar_train = tqdm(total=len(dataset), desc=f"Training ({self.mode}, Epoch {epoch+1})")
+            progress_bar_train = tqdm(total=len(train_dataset), desc=f"Training ({self.mode}, Epoch {epoch+1})")
             train_epoch_losses = []
 
-            for batch_idx, batch_data in enumerate(dataset):
+            for batch_idx, batch_data in enumerate(train_dataset):
                 loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer = self._perform_batch_step(
                     model, context_extractor, batch_data, optimizer,
                     accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True
@@ -556,7 +556,7 @@ class DiffusionTrainer:
                 current_best_val_loss_tracker, # Pass the current best loss
                 current_val_loss_for_this_epoch, # Pass this epoch's validation loss (can be None)
                 global_step_optimizer, best_checkpoint_path, writer,
-                val_dataset if val_dataset else dataset, # Dataset for samples
+                val_dataset if val_dataset else train_dataset, # Dataset for samples
                 context_extractor # Pass context_extractor for sample generation
             )
 

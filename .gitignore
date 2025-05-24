@@ -10,4 +10,5 @@ result.png
 *.png
 *.__pyc
 test.py
+*.mp4
 processed_data
