@@ -219,6 +219,26 @@ class DiffusionTrainer:
 
     def _perform_batch_step(self, model, context_extractor, batch_data, optimizer,
                             accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True):
+        """
+        Perform a single batch step of training or validation.
+        This function handles the forward pass, loss calculation, and optimizer step
+        if in training mode.
+        Args:
+            model (torch.nn.Module): The diffusion model.
+            context_extractor (torch.nn.Module, optional): Model for on-the-fly feature extraction.
+            batch_data (tuple): A tuple containing the batch data: (low_res, upscaled_rrdb, original_hr, original_residual).
+            optimizer (torch.optim.Optimizer): The optimizer for the model.
+            accumulation_steps (int): Number of steps for gradient accumulation.
+            current_accumulation_idx (int): Current index in the accumulation cycle.
+            global_step_optimizer (int): Global step count for the optimizer.
+            is_training (bool): Flag indicating whether to perform training or validation.
+        Returns:
+            tuple: A tuple containing:
+                - loss (float): The computed loss for the batch.
+                - current_accumulation_idx (int): Updated index in the accumulation cycle.
+                - global_step_optimizer (int): Updated global step count for the optimizer.
+                - updated_optimizer_this_step (bool): Flag indicating if the optimizer was updated this step.
+        """
         # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual)
         # lr_features_batch_of_lists is NO LONGER in batch_data
         low_res_image_batch, _, _, residual_image_batch = batch_data
@@ -262,6 +282,7 @@ class DiffusionTrainer:
         return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step
 
     def _run_validation_epoch(self, model, context_extractor, val_loader, writer, epoch):
+        """Run a validation epoch and return the average validation loss."""
         model.eval() # Set diffusion model to eval mode
         # context_extractor is already in eval mode if loaded by BasicRRDBNetTrainer.load_model_for_evaluation
         total_val_loss = 0.0
@@ -368,6 +389,18 @@ class DiffusionTrainer:
         return new_best_val_loss
 
     def _generate_and_log_samples(self, model, dataset_loader, epoch, writer, context_extractor): # Added context_extractor
+        """
+        Generate sample images from the model and log them to TensorBoard.
+        This function takes a batch of low-resolution images, generates
+        high-resolution images using the diffusion model, and logs
+        the results to TensorBoard.
+        Args:
+            model (torch.nn.Module): The diffusion model.
+            dataset_loader (DataLoader): DataLoader for the dataset to sample from.
+            epoch (int): Current epoch number.
+            writer (SummaryWriter): TensorBoard writer for logging.
+            context_extractor (torch.nn.Module, optional): Model for on-the-fly feature extraction.
+        """
         print(f"Generating sample images for TensorBoard at epoch {epoch+1}...")
         model.eval() # Set diffusion model to eval
         # context_extractor is assumed to be in eval mode already
@@ -494,6 +527,27 @@ class DiffusionTrainer:
                 log_dir_base="./logs_diffusion",
                 checkpoint_dir_base="./checkpoints_diffusion",
              ) -> None:
+        """
+        Main training loop for the diffusion model.
+        This function handles the training process, including logging,
+        validation, and checkpointing.
+        Args:
+            dataset (DataLoader): DataLoader for the training dataset.
+            model (torch.nn.Module): The diffusion model to be trained.
+            optimizer: Optimizer for the model.
+            scheduler: Learning rate scheduler (optional).
+            context_extractor (torch.nn.Module, optional): Model for on-the-fly feature extraction.
+            val_dataset (DataLoader, optional): DataLoader for the validation dataset.
+            val_every_n_epochs (int, optional): Frequency of validation epochs.
+            accumulation_steps (int, optional): Number of gradient accumulation steps.
+            epochs (int, optional): Total number of training epochs.
+            start_epoch (int, optional): Epoch to resume training from.
+            best_loss (float, optional): Initial best loss for tracking.
+            log_dir_param (str, optional): Directory for TensorBoard logs. If None, defaults to log_dir_base + timestamp.
+            checkpoint_dir_param (str, optional): Directory for saving checkpoints. If None, defaults to checkpoint_dir_base + timestamp.
+            log_dir_base (str, optional): Base directory for TensorBoard logs.
+            checkpoint_dir_base (str, optional): Base directory for saving checkpoints.
+        """
 
         model.to(self.device)
         if context_extractor:

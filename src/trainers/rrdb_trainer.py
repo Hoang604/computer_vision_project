@@ -115,6 +115,12 @@ class BasicRRDBNetTrainer:
         return scheduler
 
     def _setup_logging_and_checkpointing(self, log_dir_param, checkpoint_dir_param):
+        """
+        Sets up logging and checkpointing directories.
+        Args:
+            log_dir_param (str): Directory for logging.
+            checkpoint_dir_param (str): Directory for saving checkpoints.
+        """
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         if self.logging_config.get('exp_name') is not None:
             exp_name = self.logging_config['exp_name']
@@ -153,6 +159,15 @@ class BasicRRDBNetTrainer:
         return loss
 
     def _run_validation_epoch(self, val_loader: DataLoader, epoch: int, predict_residual: bool):
+        """
+        Runs a validation epoch.
+        Args:
+            val_loader (DataLoader): DataLoader for validation data.
+            epoch (int): Current epoch number.
+            predict_residual (bool): Flag to predict residuals instead of HR images.
+        Returns:
+            avg_val_loss (float): Average validation loss for the epoch.
+        """
         self.model.eval() 
         total_val_loss = 0.0
         num_val_batches = 0
@@ -270,7 +285,21 @@ class BasicRRDBNetTrainer:
               save_every_n_epochs: int = 5,
               predict_residual: bool = False
              ):
-        
+        """
+        Main training loop for the BasicRRDBNet.
+        Args:
+            train_loader (DataLoader): DataLoader for training data.
+            epochs (int): Number of epochs to train.
+            val_loader (DataLoader): DataLoader for validation data (optional).
+            val_every_n_epochs (int): Validation frequency in epochs.
+            accumulation_steps (int): Number of steps for gradient accumulation.
+            log_dir_param (str): Directory for logging.
+            checkpoint_dir_param (str): Directory for saving checkpoints.
+            resume_checkpoint_path (str): Path to checkpoint for resuming training.
+            save_every_n_epochs (int): Frequency of saving checkpoints.
+            predict_residual (bool): Flag to predict residuals instead of HR images.
+        """
+
         self._setup_logging_and_checkpointing(log_dir_param, checkpoint_dir_param)
         initial_best_loss_from_resume = float('inf')
 
@@ -388,6 +417,15 @@ class BasicRRDBNetTrainer:
             print("(This was the best training loss as no validation was performed.)") # write message on console
 
     def save_checkpoint(self, epoch, loss_value, is_best_model=False, is_validation_loss=False): 
+        """
+        Saves the model checkpoint.
+        Args:
+            epoch (int): Current epoch number.
+            loss_value (float): Loss value to save.
+            is_best_model (bool): Flag indicating if this is the best model.
+            is_validation_loss (bool): Flag indicating if the loss is from validation.
+        """
+
         if not self.checkpoint_dir:
             print("Warning: Checkpoint directory not set. Skipping save.") # write message on console
             return
@@ -423,6 +461,15 @@ class BasicRRDBNetTrainer:
         print(log_msg) # write message on console
 
     def load_checkpoint_for_resume(self, checkpoint_path: str):
+        """
+        Loads a checkpoint for resuming training.
+        Args:
+            checkpoint_path (str): Path to the checkpoint file.
+        Returns:
+            start_epoch_res (int): The epoch to resume training from.
+            global_step_optimizer_res (int): The global step of the optimizer.
+            loaded_loss_metric_from_checkpoint (float): The loss metric from the checkpoint.
+        """
         start_epoch_res = 0
         global_step_optimizer_res = 0
         loaded_loss_metric_from_checkpoint = float('inf') 
@@ -484,6 +531,15 @@ class BasicRRDBNetTrainer:
     def load_model_for_evaluation(model_path: str, 
                                   model_config: dict, 
                                   device: str = 'cuda'):
+        """
+        Loads a pre-trained RRDBNet model for evaluation.
+        Args:
+            model_path (str): Path to the pre-trained model checkpoint.
+            model_config (dict): Configuration dictionary for the model.
+            device (str): Device to load the model on ('cuda' or 'cpu').
+        Returns:
+            model (torch.nn.Module): The loaded RRDBNet model in evaluation mode.
+        """
         in_nc_val = model_config.get('in_nc', 3)
         out_nc_val = model_config.get('out_nc', 3)
         nf = model_config.get('num_feat', 64) 
