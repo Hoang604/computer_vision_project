@@ -127,14 +127,13 @@ def create_denoising_video(base_image_chw_tensor, intermediate_residuals_chw_lis
     video_writer.release()
     print(f"Video saved successfully to {video_path}")
 
-def main():
+def upscale(img, resolution):
     """
     Main function to set up and run the diffusion model inference for a single image.
     """
-    img_size = 64
+    img_size = img.shape[0]  # Assuming img is a numpy array with shape (H, W, C)
     rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
     unet_path = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
-    img_path = '/home/hoang/python/cv_project/data/quang.jpeg'
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -191,4 +190,4 @@ def main():
     plot_result(imgs_for_plot)
 
 if __name__ == '__main__':
-    main()
+    upscale()
