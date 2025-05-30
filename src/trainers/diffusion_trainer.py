@@ -340,7 +340,18 @@ class DiffusionTrainer:
                 'train_loss_epoch_avg': mean_train_loss, # Always log average train loss
                 'val_loss_epoch_avg': val_loss_this_epoch, # Log val loss if available
                 'global_optimizer_steps': global_step_optimizer,
-                'mode': self.mode
+                'mode': self.mode,
+                'model_config': {
+                    'base_dim': model.base_dim if hasattr(model, 'base_dim') else None,
+                    'out_dim': model.out_dim if hasattr(model, 'out_dim') else None, 
+                    'dim_mults': model.dim_mults if hasattr(model, 'dim_mults') else None,
+                    'cond_dim': model.cond_dim if hasattr(model, 'cond_dim') else None,
+                    'rrdb_num_blocks': model.rrdb_num_blocks if hasattr(model, 'rrdb_num_blocks') else 8,
+                    'sr_scale': model.sr_scale if hasattr(model, 'sr_scale') else 4,
+                    'use_attention': model.use_attention if hasattr(model, 'use_attention') else False,
+                    'use_weight_norm': model.use_weight_norm if hasattr(model, 'use_weight_norm') else True,
+                    'weight_init': model.weight_init if hasattr(model, 'weight_init') else True
+                }
             }
             if scheduler:
                 checkpoint_data['scheduler_state_dict'] = scheduler.state_dict()
@@ -625,6 +636,53 @@ class DiffusionTrainer:
         writer.close()
         print(f"Training finished for mode '{self.mode}'. Final best tracked loss: {current_best_val_loss_tracker:.4f}")
 
+    @staticmethod
+    def load_diffusion_unet(model_path: str,
+        device: torch.device = torch.device("cuda"),
+        verbose: bool = True
+    ) -> torch.nn.Module:
+        """
+        Load a diffusion UNet model from a specified path.
+
+        Args:
+            model_path (str): Path to the model file.
+            device (torch.device): Device to load the model onto.
+            verbose (bool): If True, prints loading information.
+
+        Returns:
+            torch.nn.Module: The loaded UNet model.
+        
+        Raises:
+            RuntimeError: If there are incompatible keys (missing or unexpected)
+                          in the model's state_dict.
+        """
+        if verbose:
+            print(f"Loading UNet model from {model_path}...")
+        
+        # It's assumed that torch.load will not use weights_only=True if model_config is needed
+        # and is not a tensor. The original code uses weights_only=False.
+        loaded_checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+        
+        # Ensure the expected keys are in the checkpoint
+        if 'model_config' not in loaded_checkpoint:
+            raise KeyError("Checkpoint missing 'model_config'. Cannot initialize UNet.")
+        if 'model_state_dict' not in loaded_checkpoint:
+            raise KeyError("Checkpoint missing 'model_state_dict'. Cannot load UNet weights.")
+
+        model_config = loaded_checkpoint['model_config']
+        model_state_dict = loaded_checkpoint['model_state_dict']
+        
+        from src.diffusion_modules.unet import Unet # Assuming this import path is correct
+        unet = Unet(**model_config).to(device)
+        
+        # Load state_dict with strict=True to raise an error on incompatible keys
+        # This is the default, but explicit is clearer.
+        unet.load_state_dict(model_state_dict, strict=True)
+        
+        if verbose:
+            print("Model loaded successfully with strict key checking.")
+        
+        return unet
     @staticmethod
     def load_model_weights(model, model_path, verbose=False, device='cuda'):
         """

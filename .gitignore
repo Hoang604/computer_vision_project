@@ -12,3 +12,4 @@ result.png
 test.py
 *.mp4
 processed_data
+inference_outputs
