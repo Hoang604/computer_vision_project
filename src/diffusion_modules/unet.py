@@ -37,6 +37,15 @@ class Unet(nn.Module):
                  use_weight_norm=True,
                  weight_init=True):
         super().__init__()
+        self.base_dim = base_dim
+        self.out_dim = out_dim
+        self.dim_mults = dim_mults
+        self.rrdb_num_blocks = rrdb_num_blocks
+        self.cond_dim = cond_dim
+        self.sr_scale = sr_scale
+        self.use_attention = use_attention
+        self.use_weight_norm = use_weight_norm
+        self.weight_init = weight_init
         dims = [3, *map(lambda m: base_dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
         groups = 0
