@@ -2,7 +2,6 @@ import torch
 import torchvision.transforms as T
 from PIL import Image
 import numpy as np
-# import matplotlib.pyplot as plt # No longer needed for plotting
 import cv2
 from tqdm import tqdm
 import os
@@ -64,8 +63,20 @@ def generate_video_for_web_app(base_image_chw_cuda, intermediate_residuals_chw_l
     os.makedirs(save_dir_actual, exist_ok=True)
     full_video_path = os.path.join(save_dir_actual, video_filename)
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # Change fourcc to H.264
+    # 'mp4v' for MPEG-4, 'XVID' for XVID, 'MJPG' for Motion-JPEG, 'H264' for H.264
+    fourcc = cv2.VideoWriter_fourcc(*'H264') # Sử dụng 'H264' hoặc 'avc1' cho H.264. 'mp4v' thường là codec mặc định cho .mp4 nếu không có H.264.
+                                            # Tuy nhiên, 'H264' có thể không được hỗ trợ trên tất cả các hệ thống hoặc cài đặt OpenCV.
+                                            # 'avc1' thường hoạt động tốt hơn với định dạng MP4 cho H.264.
+    
     video_writer = cv2.VideoWriter(full_video_path, fourcc, float(fps), (w, h))
+    
+    # Kiểm tra xem VideoWriter có được mở thành công hay không
+    if not video_writer.isOpened():
+        print(f"Error: Could not open video writer for path {full_video_path} with FOURCC {fourcc}.")
+        print("Ensure you have the necessary codecs installed (e.g., FFMPEG).")
+        return None
+
     print(f"Creating video with {len(intermediate_residuals_chw_list_cuda)} frames, saving to {full_video_path}...")
 
     for residual_chw_cuda in tqdm(intermediate_residuals_chw_list_cuda, desc="Generating video frames"):

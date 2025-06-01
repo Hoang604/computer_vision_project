@@ -8,24 +8,35 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #007bff;
-            --primary-hover-color: #0056b3;
-            --secondary-color: #6c757d;
-            --success-color: #28a745;
-            --success-hover-color: #1e7e34;
-            --danger-color: #dc3545;
-            --danger-hover-color: #b02a37;
-            --warning-color: #ffc107;
-            --warning-hover-color: #e0a800;
-            --light-bg: #f8f9fa;
-            --dark-bg: #e9ecef;
+            --primary-color: #4A90E2;
+            /* Blue */
+            --primary-hover-color: #357ABD;
+            --secondary-color: #5C6F7D;
+            /* Grey-blue */
+            --success-color: #50E3C2;
+            /* Teal */
+            --success-hover-color: #3EC9A8;
+            --danger-color: #E25050;
+            /* Red */
+            --danger-hover-color: #C93E3E;
+            --warning-color: #F8E71C;
+            /* Yellow */
+            --warning-hover-color: #DBD115;
+            --light-bg: #F0F4F8;
+            /* Light Grey-blue */
+            --dark-bg: #E0E6EB;
             --text-color: #333;
-            --text-muted: #6c757d;
-            --border-color: #ced4da;
-            --shadow-sm: 0 .125rem .25rem rgba(0, 0, 0, .075);
-            --shadow-md: 0 .5rem 1rem rgba(0, 0, 0, .15);
-            --border-radius-sm: .25rem;
-            --border-radius-md: .5rem;
+            --text-muted: #7F8C8D;
+            /* Muted Grey */
+            --border-color: #DDE1E6;
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, .08);
+            --shadow-md: 0 8px 16px rgba(0, 0, 0, .15);
+            --border-radius-sm: .375rem;
+            /* 6px */
+            --border-radius-md: .75rem;
+            /* 12px */
+            --gradient-start: #667eea;
+            --gradient-end: #764ba2;
         }
 
         * {
@@ -36,12 +47,13 @@
             font-family: 'Roboto', sans-serif;
             margin: 0;
             padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
             color: var(--text-color);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: center;
         }
 
         .main-container {
@@ -64,45 +76,54 @@
         }
 
         .pane {
-            padding: 25px;
+            padding: 30px;
             margin: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
+            flex: 1;
+            /* Make panes flexible */
         }
 
         .controls-pane {
-            flex: 1;
-            min-width: 320px;
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-width: 380px;
+            /* Slightly wider control pane */
+            background: linear-gradient(135deg, var(--light-bg) 0%, var(--dark-bg) 100%);
             border-right: 1px solid var(--border-color);
+            justify-content: space-between;
+            /* Distribute content */
         }
 
         .results-pane {
-            flex: 2;
             background-color: var(--light-bg);
+            justify-content: center;
+            /* Center content vertically */
         }
 
         .image-placeholder,
         .video-placeholder {
             width: 100%;
-            max-width: 400px;
-            min-height: 200px;
+            max-width: 450px;
+            /* Larger placeholders */
+            min-height: 250px;
             border: 2px dashed var(--border-color);
             background-color: #fff;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
+            /* More spacing */
             border-radius: var(--border-radius-sm);
             position: relative;
             overflow: hidden;
-            transition: border-color 0.3s ease;
+            transition: border-color 0.3s ease, background-color 0.3s ease;
+            box-shadow: var(--shadow-sm);
         }
 
         .image-placeholder:hover,
         .video-placeholder:hover {
             border-color: var(--primary-color);
+            background-color: rgba(var(--primary-color), 0.05);
         }
 
         .image-placeholder img,
@@ -112,38 +133,55 @@
             max-height: 100%;
             object-fit: contain;
             border-radius: var(--border-radius-sm);
+            display: block;
+            /* Remove extra space below image */
         }
 
         .placeholder-text {
             color: var(--text-muted);
-            font-size: 1rem;
+            font-size: 1.1rem;
             text-align: center;
             padding: 20px;
             font-weight: 500;
         }
 
         .custom-button-container {
-            margin-top: 15px;
+            margin-top: 25px;
+            /* More spacing */
             width: 100%;
             display: flex;
+            flex-direction: column;
+            /* Stack buttons vertically in controls pane */
+            gap: 15px;
+            /* Spacing between stacked buttons */
+            align-items: center;
+        }
+
+        .results-pane .custom-button-container {
+            flex-direction: row;
+            /* Buttons in results pane can be horizontal */
             justify-content: center;
-            gap: 10px;
             flex-wrap: wrap;
         }
 
         .custom-button {
-            padding: 12px 25px;
-            font-size: 1rem;
-            font-weight: 500;
+            padding: 14px 30px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            /* Bolder text */
             color: white;
             border: none;
             border-radius: var(--border-radius-sm);
             cursor: pointer;
             transition: all 0.3s ease;
             box-shadow: var(--shadow-sm);
-            min-width: 150px;
+            min-width: 180px;
+            /* Wider buttons */
             position: relative;
             overflow: hidden;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            /* Uppercase text */
         }
 
         .custom-button::before {
@@ -162,8 +200,9 @@
         }
 
         .custom-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .2);
+            transform: translateY(-3px);
+            /* More pronounced lift */
+            box-shadow: 0 6px 12px rgba(0, 0, 0, .2);
         }
 
         .custom-button:active {
@@ -172,9 +211,10 @@
         }
 
         .custom-button:disabled {
-            background-color: #aaa;
+            background-color: #B0B0B0;
+            /* Lighter disabled color */
             cursor: not-allowed;
-            opacity: 0.7;
+            opacity: 0.6;
             transform: none;
         }
 
@@ -192,6 +232,8 @@
 
         .start-popup-button {
             background-color: var(--success-color);
+            color: var(--text-color);
+            /* Darker text for bright button */
         }
 
         .start-popup-button:hover:not(:disabled) {
@@ -199,11 +241,12 @@
         }
 
         .play-video-button {
-            background-color: var(--danger-color);
+            background-color: var(--secondary-color);
         }
 
         .play-video-button:hover:not(:disabled) {
-            background-color: var(--danger-hover-color);
+            background-color: #4A5C67;
+            /* Darker secondary */
         }
 
         .download-button {
@@ -216,55 +259,66 @@
         }
 
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
+            /* More spacing */
             width: 100%;
-            max-width: 350px;
+            max-width: 380px;
         }
 
         .form-group label {
             display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
+            margin-bottom: 10px;
+            /* More spacing */
+            font-weight: 600;
+            /* Bolder label */
             color: var(--text-color);
+            font-size: 1.05rem;
         }
 
         .form-group input[type="number"],
         .form-group input[type="file"] {
             width: 100%;
-            padding: 12px;
+            padding: 14px;
+            /* Larger padding */
             border-radius: var(--border-radius-sm);
             border: 2px solid var(--border-color);
             font-size: 1rem;
             transition: all 0.3s ease;
+            background-color: #fff;
         }
 
         .form-group input[type="file"] {
-            padding: 8px;
+            padding: 10px;
+            /* Adjust padding for file input */
         }
 
         .form-group input[type="number"]:focus,
         .form-group input[type="file"]:focus {
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 .3rem rgba(0, 123, 255, .15);
+            box-shadow: 0 0 0 .4rem rgba(74, 144, 226, .2);
+            /* Stronger focus shadow */
             outline: none;
         }
 
         .form-group small {
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             color: var(--text-muted);
             display: block;
-            margin-top: 5px;
+            margin-top: 8px;
+            /* More spacing */
             font-style: italic;
         }
 
         .loader {
-            border: 4px solid #f0f0f0;
-            border-top: 4px solid var(--primary-color);
+            border: 5px solid #f0f0f0;
+            border-top: 5px solid var(--primary-color);
             border-radius: 50%;
-            width: 50px;
-            height: 50px;
+            width: 60px;
+            /* Larger loader */
+            height: 60px;
             animation: spin 1s linear infinite;
-            margin: 20px auto;
+            margin: 30px auto;
+            /* More margin */
             display: none;
         }
 
@@ -282,22 +336,29 @@
         h2 {
             text-align: center;
             color: var(--text-color);
-            font-weight: 500;
-            margin-bottom: 30px;
+            font-weight: 700;
+            /* Bolder headings */
+            margin-bottom: 35px;
+            /* More spacing */
         }
 
         h1 {
-            font-size: 2.5rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-size: 3rem;
+            /* Larger title */
+            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             text-shadow: none;
+            letter-spacing: 1.5px;
         }
 
         h2 {
-            font-size: 1.75rem;
-            margin-bottom: 25px;
+            font-size: 2rem;
+            /* Larger subtitle */
+            margin-bottom: 30px;
+            color: var(--primary-color);
+            /* Color for section titles */
         }
 
         .hidden {
@@ -305,38 +366,45 @@
         }
 
         .status-message {
-            padding: 15px;
+            padding: 18px;
+            /* Larger padding */
             border-radius: var(--border-radius-sm);
-            margin: 15px 0;
+            margin: 20px 0;
+            /* More margin */
             font-weight: 500;
             text-align: center;
+            font-size: 1rem;
+            box-shadow: var(--shadow-sm);
         }
 
         .status-success {
-            background-color: #d4edda;
+            background-color: #D4EDDA;
             color: #155724;
-            border: 1px solid #c3e6cb;
+            border: 1px solid #C3E6CB;
         }
 
         .status-error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+            background-color: #F8D7DA;
+            color: #721C24;
+            border: 1px solid #F5C6CB;
         }
 
         .status-info {
-            background-color: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
+            background-color: #D1ECF1;
+            color: #0C5460;
+            border: 1px solid #BEE5EB;
         }
 
         .progress-bar {
             width: 100%;
-            height: 6px;
+            height: 8px;
+            /* Thicker progress bar */
             background-color: #e9ecef;
-            border-radius: 3px;
+            border-radius: 4px;
             overflow: hidden;
-            margin: 10px 0;
+            margin: 15px 0;
+            /* More margin */
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
         }
 
         .progress-fill {
@@ -344,37 +412,60 @@
             background: linear-gradient(90deg, var(--primary-color), var(--success-color));
             width: 0%;
             transition: width 0.3s ease;
-            border-radius: 3px;
+            border-radius: 4px;
         }
 
         .image-info {
             background-color: #fff;
-            padding: 15px;
+            padding: 20px;
+            /* More padding */
             border-radius: var(--border-radius-sm);
-            margin: 15px 0;
+            margin: 20px 0;
             box-shadow: var(--shadow-sm);
+            width: 100%;
+            max-width: 450px;
         }
 
         .image-info h3 {
-            margin: 0 0 10px 0;
-            color: var(--text-color);
-            font-size: 1.1rem;
+            margin: 0 0 15px 0;
+            color: var(--primary-color);
+            /* Color for info heading */
+            font-size: 1.2rem;
+            font-weight: 600;
+            text-align: center;
         }
 
         .image-info p {
-            margin: 5px 0;
+            margin: 8px 0;
+            /* More spacing */
             color: var(--text-muted);
-            font-size: 0.9rem;
+            font-size: 1rem;
+            display: flex;
+            justify-content: space-between;
+            /* Align text nicely */
+            padding-bottom: 5px;
+            border-bottom: 1px dashed var(--border-color);
+        }
+
+        .image-info p:last-child {
+            border-bottom: none;
+        }
+
+        .image-info p strong {
+            color: var(--text-color);
+            font-weight: 500;
         }
 
         .video-controls {
-            margin: 15px 0;
+            margin: 20px 0;
             text-align: center;
+            display: flex;
+            justify-content: center;
         }
 
         @media (max-width: 768px) {
             body {
-                padding: 10px;
+                padding: 15px;
             }
 
             .main-container {
@@ -382,41 +473,58 @@
             }
 
             .pane {
-                padding: 15px;
+                padding: 20px;
             }
 
             h1 {
-                font-size: 2rem;
+                font-size: 2.5rem;
+            }
+
+            h2 {
+                font-size: 1.6rem;
             }
 
             .custom-button {
-                min-width: 120px;
-                padding: 10px 20px;
+                min-width: unset;
+                /* Allow buttons to shrink */
+                width: 100%;
+                /* Take full width on small screens */
+                padding: 12px 20px;
+            }
+
+            .custom-button-container {
+                gap: 10px;
+                /* Smaller gap on small screens */
+            }
+
+            .image-placeholder,
+            .video-placeholder {
+                max-width: 100%;
             }
         }
     </style>
 </head>
 
 <body>
-    <h1>✨ Image Super-Resolution ✨</h1>
+    <h1>Image Super-Resolution</h1>
     <div class="main-container">
         <div class="controls-pane pane">
-            <h2>⚙️ Controls</h2>
+            <h2>Controls</h2>
             <form id="upscale-form" enctype="multipart/form-data">
                 <div class="form-group">
-                    <label for="file-input">📁 Upload Image:</label>
+                    <label for="file-input">Upload Image:</label>
                     <input type="file" id="file-input" name="img_file"
                         accept="image/png, image/jpeg, image/jpg, image/webp" required>
                     <small>Supported formats: PNG, JPG, JPEG, WebP (Max: 16MB)</small>
                 </div>
 
                 <div class="image-placeholder" id="lr-image-preview-placeholder">
-                    <span class="placeholder-text">🖼️ Low Resolution Preview</span>
+                    <span class="placeholder-text">Low Resolution Preview</span>
                 </div>
 
                 <div class="form-group">
-                    <label for="resolution-input">🎯 Target LR Edge (pixels):</label>
-                    <input type="number" id="resolution-input" name="resolution" value="10" min="10" max="2048"
+                    <label for="resolution-input">Target LR Edge (pixels):</label>
+                    <input type="number" id="resolution-input" name="resolution" value="128" min="10" max="2048"
                         step="16" required>
                     <small>Final HR output will be 4x this resolution. Recommended: 128-512px</small>
                 </div>
@@ -427,7 +535,7 @@
 
                 <div class="custom-button-container">
                     <button type="submit" class="start-popup-button custom-button" id="start-btn" disabled>
-                        🚀 Start Upscaling
+                        Start Upscaling
                     </button>
                 </div>
             </form>
@@ -435,32 +543,32 @@
             <div id="loader" class="loader hidden"></div>
             <div id="status-message" class="hidden"></div>
 
-            <div class="custom-button-container">
-                <button class="play-video-button custom-button" id="play-video-btn" disabled>
-                    🎬 Play Process Video
-                </button>
-                <button class="download-button custom-button hidden" id="download-btn" disabled>
-                    💾 Download Result
-                </button>
-            </div>
-
-            <div class="image-placeholder hidden" id="plot-image-placeholder" style="margin-top: 20px;">
-                <span class="placeholder-text">📊 Comparison Plot</span>
+            <div class="image-placeholder hidden" id="plot-image-placeholder" style="margin-top: 30px;">
+                <span class="placeholder-text">Comparison Plot</span>
             </div>
         </div>
 
         <div class="results-pane pane">
-            <h2>🌟 Results</h2>
+            <h2>Results</h2>
             <div class="image-placeholder" id="generated-image-placeholder">
-                <span class="placeholder-text">✨ Upscaled Image Output</span>
+                <span class="placeholder-text">Upscaled Image Output</span>
             </div>
 
             <div class="image-info hidden" id="image-info">
-                <h3>📈 Image Details</h3>
-                <p id="original-size">Original: --</p>
-                <p id="upscaled-size">Upscaled: --</p>
-                <p id="scale-factor">Scale Factor: --</p>
-                <p id="processing-time">Processing Time: --</p>
+                <h3>Image Details</h3>
+                <p>Original: <strong id="original-size">--</strong></p>
+                <p>Upscaled: <strong id="upscaled-size">--</strong></p>
+                <p>Scale Factor: <strong id="scale-factor">--</strong></p>
+                <p>Processing Time: <strong id="processing-time">--</strong></p>
+            </div>
+
+            <div class="custom-button-container">
+                <button class="download-button custom-button hidden" id="download-btn" disabled>
+                    Download Result
+                </button>
+                <button class="play-video-button custom-button" id="play-video-btn" disabled>
+                    Play Process Video
+                </button>
             </div>
 
             <div class="video-placeholder hidden" id="video-player-container">
@@ -468,8 +576,8 @@
                     Your browser does not support the video tag.
                 </video>
                 <div class="video-controls">
-                    <button class="custom-button" id="fullscreen-btn" style="background-color: var(--secondary-color);">
-                        🔍 Fullscreen
+                    <button class="custom-button" id="fullscreen-btn">
+                        Fullscreen Video
                     </button>
                 </div>
             </div>
@@ -520,9 +628,9 @@
         }
 
         function resetUI() {
-            generatedImagePlaceholder.innerHTML = '<span class="placeholder-text">✨ Upscaled Image Output</span>';
+            generatedImagePlaceholder.innerHTML = '<span class="placeholder-text">Upscaled Image Output</span>';
             plotImagePlaceholder.classList.add('hidden');
-            plotImagePlaceholder.innerHTML = '<span class="placeholder-text">📊 Comparison Plot</span>';
+            plotImagePlaceholder.innerHTML = '<span class="placeholder-text">Comparison Plot</span>';
             imageInfo.classList.add('hidden');
             playVideoBtn.disabled = true;
             downloadBtn.classList.add('hidden');
@@ -534,10 +642,10 @@
         }
 
         function updateImageInfo(originalSize, upscaledSize, scaleFactor, processingTime) {
-            document.getElementById('original-size').textContent = `Original: ${originalSize}`;
-            document.getElementById('upscaled-size').textContent = `Upscaled: ${upscaledSize}`;
-            document.getElementById('scale-factor').textContent = `Scale Factor: ${scaleFactor}x`;
-            document.getElementById('processing-time').textContent = `Processing Time: ${processingTime}s`;
+            document.getElementById('original-size').textContent = originalSize;
+            document.getElementById('upscaled-size').textContent = upscaledSize;
+            document.getElementById('scale-factor').textContent = `${scaleFactor}x`;
+            document.getElementById('processing-time').textContent = `${processingTime}s`;
             imageInfo.classList.remove('hidden');
         }
 
@@ -549,6 +657,8 @@
                 if (file.size > 16 * 1024 * 1024) {
                     showStatus('File size exceeds 16MB limit', 'error');
                     fileInput.value = '';
+                    lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
+                    startBtn.disabled = true;
                     return;
                 }
 
@@ -556,6 +666,8 @@
                 if (!file.type.startsWith('image/')) {
                     showStatus('Please select a valid image file', 'error');
                     fileInput.value = '';
+                    lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
+                    startBtn.disabled = true;
                     return;
                 }
 
@@ -576,11 +688,12 @@
                 reader.onerror = function () {
                     showStatus('Error reading file', 'error');
                     fileInput.value = '';
+                    lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
                 };
 
                 reader.readAsDataURL(file);
             } else {
-                lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">🖼️ Low Resolution Preview</span>';
+                lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
                 startBtn.disabled = true;
                 resetUI();
             }
@@ -601,18 +714,19 @@
             startBtn.disabled = true;
             playVideoBtn.disabled = true;
             downloadBtn.disabled = true;
-            generatedImagePlaceholder.innerHTML = '<span class="placeholder-text">🔄 Processing... Please wait</span>';
+            generatedImagePlaceholder.innerHTML = '<span class="placeholder-text">Processing... Please wait</span>';
             plotImagePlaceholder.classList.add('hidden');
             videoPlayerContainer.classList.add('hidden');
             uploadProgress.classList.remove('hidden');
+            statusMessage.classList.add('hidden'); // Hide previous status message
 
             // Simulate progress for user feedback
             let progress = 0;
             const progressInterval = setInterval(() => {
-                progress += Math.random() * 15;
-                if (progress > 90) progress = 90;
+                progress += Math.random() * 5; // Slower progress
+                if (progress > 95) progress = 95; // Stop before 100%
                 progressFill.style.width = progress + '%';
-            }, 500);
+            }, 300); // More frequent updates
 
             const formData = new FormData(upscaleForm);
 
@@ -653,7 +767,7 @@
                     }
 
                     // Update image info
-                    const resolution = result.resolution || document.getElementById('resolution-input').value;
+                    const resolution = document.getElementById('resolution-input').value;
                     updateImageInfo(
                         `${resolution}px (LR)`,
                         `${resolution * 4}px (HR)`,
@@ -664,13 +778,13 @@
                 } else {
                     const errorMsg = result?.error || 'Unknown error occurred.';
                     showStatus(`Error: ${errorMsg}`, 'error');
-                    generatedImagePlaceholder.innerHTML = `<span class="placeholder-text" style="color:red;">❌ Error: ${errorMsg}</span>`;
+                    generatedImagePlaceholder.innerHTML = `<span class="placeholder-text" style="color:var(--danger-color);">Error: ${errorMsg}</span>`;
                 }
             } catch (error) {
                 console.error('Network error:', error);
                 clearInterval(progressInterval);
                 showStatus('Network error. Please check your connection and try again.', 'error');
-                generatedImagePlaceholder.innerHTML = '<span class="placeholder-text" style="color:red;">🔌 Network Error</span>';
+                generatedImagePlaceholder.innerHTML = '<span class="placeholder-text" style="color:var(--danger-color);">Network Error</span>';
             } finally {
                 loader.classList.add('hidden');
                 uploadProgress.classList.add('hidden');
@@ -691,20 +805,20 @@
 
                 processVideo.addEventListener('loadstart', () => {
                     showStatus('Loading video...', 'info');
-                });
+                }, { once: true }); // Use once: true to avoid multiple event listeners
 
                 processVideo.addEventListener('canplay', () => {
                     showStatus('Video ready to play!', 'success');
-                });
+                }, { once: true });
 
                 processVideo.addEventListener('error', (e) => {
                     console.error('Video error:', e);
                     showStatus('Error loading video. The video file may be corrupted or not yet ready.', 'error');
                     videoPlayerContainer.classList.add('hidden');
-                });
+                }, { once: true });
 
                 // Scroll to video
-                videoPlayerContainer.scrollIntoView({ behavior: 'smooth' });
+                videoPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
             } else {
                 showStatus('No video available. Please upscale an image first.', 'error');
             }
@@ -727,9 +841,9 @@
         fullscreenBtn.addEventListener('click', function () {
             if (processVideo.requestFullscreen) {
                 processVideo.requestFullscreen();
-            } else if (processVideo.webkitRequestFullscreen) {
+            } else if (processVideo.webkitRequestFullscreen) { /* Safari */
                 processVideo.webkitRequestFullscreen();
-            } else if (processVideo.msRequestFullscreen) {
+            } else if (processVideo.msRequestFullscreen) { /* IE11 */
                 processVideo.msRequestFullscreen();
             }
         });
@@ -756,7 +870,7 @@
 
         function highlight(e) {
             dropZone.style.borderColor = 'var(--primary-color)';
-            dropZone.style.backgroundColor = 'rgba(0, 123, 255, 0.1)';
+            dropZone.style.backgroundColor = 'rgba(74, 144, 226, 0.1)';
         }
 
         function unhighlight(e) {

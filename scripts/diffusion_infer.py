@@ -57,7 +57,7 @@ def create_denoising_video(base_image_chw_tensor, intermediate_residuals_chw_lis
     output_dir = "inference_outputs"
     os.makedirs(output_dir, exist_ok=True)
     video_path = os.path.join(output_dir, output_filename)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*'H264')
     video_writer = cv2.VideoWriter(video_path, fourcc, float(fps), (w, h))
     print(f"Creating video with {len(intermediate_residuals_chw_list)} frames, saving to {video_path}...")
     for i, residual_tensor in enumerate(tqdm(intermediate_residuals_chw_list, desc="Generating video frames")):
