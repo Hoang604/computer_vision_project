@@ -1,193 +1,240 @@
-from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
-import matplotlib.pyplot as plt
-from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
-import numpy as np
-from src.diffusion_modules.unet import Unet
 import torch
-import os
+import torchvision.transforms as T
+from PIL import Image
+import numpy as np
+# import matplotlib.pyplot as plt # No longer needed for plotting
 import cv2
 from tqdm import tqdm
-from PIL import Image
-import torchvision.transforms as T
-import torch
+import os
+import sys
 
-def process_image(image_path, img_size):
-    """
-    Processes an image:
-    1. Resizes it so its smaller edge equals img_size (maintaining aspect ratio).
-    2. Center crops to img_size x img_size.
-    3. Converts to a PyTorch tensor (CHW, pixel values in [0,1]).
-    4. Normalizes the tensor to the range [-1, 1].
-    5. Adds a batch dimension.
+# Add the project root to the Python path to allow importing from src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-    Args:
-        image_path (str): Path to the input image.
-        img_size (int): Target size for the smaller edge and the crop dimensions.
+from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
+from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
+from src.diffusion_modules.unet import Unet 
 
-    Returns:
-        torch.Tensor: Processed image as a PyTorch tensor in [B, C, H, W] format,
-                      normalized to [-1, 1].
-    """
-    # Open the image using Pillow
-    img = Image.open(image_path).convert("RGB") # Ensure image is in RGB format
+# --- Configuration (Set these paths and parameters as needed) ---
+DEFAULT_RRDB_PATH = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
+DEFAULT_UNET_PATH = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
 
-    # Define the sequence of transformations
-    # 1. T.Resize(img_size):
-    #    Resizes the image so that its smaller dimension (height or width)
-    #    becomes img_size, while maintaining the original aspect ratio.
-    #    For example, if img_size=256:
-    #    - an 800x600 image (W x H) becomes (256 * 800/600) x 256 ~ 341x256
-    #    - a 600x800 image (W x H) becomes 256 x (256 * 800/600) ~ 256x341
-    #    Note: T.Resize with an integer input applies to the smaller edge.
-    #
-    # 2. T.CenterCrop(img_size):
-    #    Crops a square of img_size x img_size from the center of the resized image.
-    #    - From a 341x256 image, it crops the central 256x256 portion.
-    #    - From a 256x341 image, it crops the central 256x256 portion.
-    #
-    # 3. T.ToTensor():
-    #    Converts the PIL Image (HWC, pixel values 0-255) to a PyTorch tensor (CHW, pixel values 0.0-1.0).
+WEB_APP_GENERATED_FOLDER_NAME = 'generated_outputs'
+STATIC_FOLDER_PARENT_FOR_SCRIPT = os.path.join(os.path.dirname(__file__), '..', 'web_app', 'static')
+OUTPUT_DIR_FOR_SCRIPT_EXECUTION = os.path.join(os.path.dirname(__file__), "inference_outputs")
+VIDEO_SUBDIR = ''
+
+os.makedirs(OUTPUT_DIR_FOR_SCRIPT_EXECUTION, exist_ok=True)
+
+# --- Helper Functions ---
+
+def process_input_image(image_path_or_pil, target_lr_edge_size):
+    if isinstance(image_path_or_pil, str):
+        img = Image.open(image_path_or_pil).convert("RGB")
+    elif isinstance(image_path_or_pil, Image.Image):
+        img = image_path_or_pil.convert("RGB")
+    else:
+        raise ValueError("image_path_or_pil must be a file path or a PIL Image object.")
+
     transform = T.Compose([
-        T.Resize(img_size),            # Smaller edge will be img_size, aspect ratio preserved
-        T.CenterCrop(img_size),        # Crop the center to img_size x img_size
-        T.ToTensor()                   # Convert to a PyTorch tensor (CHW format)
+        T.Resize(target_lr_edge_size),
+        T.CenterCrop(target_lr_edge_size),
+        T.ToTensor()
     ])
-
-    # Apply the transformations
     tensor_img = transform(img)
-
-    # Normalize to [-1, 1] range
-    # T.ToTensor() scales pixels to [0, 1], so (x * 2.0) - 1.0 maps [0, 1] to [-1, 1]
     tensor_img = tensor_img * 2.0 - 1.0
-
-    # Add batch dimension (BCHW)
-    # The model likely expects input in the format [batch_size, channels, height, width]
     tensor_img = tensor_img.unsqueeze(0)
-
     return tensor_img
 
-def plot_result(imgs):
-    """
-    Plots the low-resolution, upscaled, diffusion residual, constructed, and high-resolution images.
-    """
-    lr, up, diff_res, con = imgs
-    fig, axs = plt.subplots(1, 4, figsize=(16, 4))
-    axs[0].imshow(lr, interpolation='nearest')
-    axs[0].set_title(f'LR Image\n({lr.shape[0]}x{lr.shape[1]})')
-    axs[1].imshow(up)
-    axs[1].set_title(f'RRDB Upscaled\n({up.shape[0]}x{up.shape[1]})')
-    axs[2].imshow(diff_res)
-    axs[2].set_title(f'Predicted Residual\n({diff_res.shape[0]}x{diff_res.shape[1]})')
-    axs[3].imshow(con)
-    axs[3].set_title(f'Refined Image\n({con.shape[0]}x{con.shape[1]})')
-    for ax in axs:
-        ax.set_aspect('auto')
-        ax.axis('off')
-    plt.tight_layout()
-    output_dir = "inference_outputs"
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, 'result_quang.png')
-    plt.savefig(save_path)
-    print(f"Comparison plot saved to {save_path}")
-    plt.close(fig)
-
-def create_denoising_video(base_image_chw_tensor, intermediate_residuals_chw_list, output_filename="denoising_process.mp4", fps=10):
-    """
-    Creates a video of the denoising process.
-
-    Args:
-        base_image_chw_tensor (torch.Tensor): The base upscaled image (e.g., from RRDBNet)
-                                             as a CHW tensor, range [-1, 1], on CUDA.
-        intermediate_residuals_chw_list (list[torch.Tensor]): A list of CHW tensors,
-                                                              each representing the predicted residual
-                                                              at an intermediate denoising step.
-                                                              Tensors are on CUDA, range approx [-1, 1].
-        output_filename (str): Name of the output video file.
-        fps (int): Frames per second for the video.
-    """
-    if not intermediate_residuals_chw_list:
-        print("No intermediate residuals to create a video.")
-        return
-    c, h, w = base_image_chw_tensor.shape
-    output_dir = "inference_outputs"
-    os.makedirs(output_dir, exist_ok=True)
-    video_path = os.path.join(output_dir, output_filename)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(video_path, fourcc, float(fps), (w, h))
-    print(f"Creating video with {len(intermediate_residuals_chw_list)} frames, saving to {video_path}...")
-    for i, residual_tensor in enumerate(tqdm(intermediate_residuals_chw_list, desc="Generating video frames")):
-        residual_tensor = residual_tensor.to(base_image_chw_tensor.device)
-        current_image_tensor = base_image_chw_tensor + residual_tensor
-        current_image_tensor = torch.clamp(current_image_tensor, -1.0, 1.0)
-        current_image_normalized = (current_image_tensor + 1.0) / 2.0
-        frame_hwc = current_image_normalized.permute(1, 2, 0)
-        frame_np = (frame_hwc.cpu().numpy() * 255).astype(np.uint8)
-        frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
-        video_writer.write(frame_bgr)
-    video_writer.release()
-    print(f"Video saved successfully to {video_path}")
-
-def upscale(img, resolution):
-    """
-    Main function to set up and run the diffusion model inference for a single image.
-    """
-    img_size = img.shape[0]  # Assuming img is a numpy array with shape (H, W, C)
-    rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
-    unet_path = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
-    context_extractor = BasicRRDBNetTrainer.load_model_for_evaluation(
-        model_path=rrdb_path,
-        device=device
-    )
-
-    unet = DiffusionTrainer.load_diffusion_unet(
-        model_path=unet_path,
-        device=device
-    ).eval()
-    generator = ResidualGenerator(img_size=img_size * 4, predict_mode='noise', device=device)
-
+def generate_video_for_web_app(base_image_chw_cuda, intermediate_residuals_chw_list_cuda, base_filename="video", fps=10):
+    if not intermediate_residuals_chw_list_cuda:
+        print("No intermediate residuals for video.")
+        return None
     
-    lr_img_batch = process_image(img_path, img_size).to(device)
-    print(f"Input image shape: {lr_img_batch.shape}, dtype: {lr_img_batch.dtype}")
-    print(f"Input image range: {lr_img_batch.min().item()} to {lr_img_batch.max().item()}")
-    with torch.no_grad():
-        up_lr_img_cuda, features_cuda = context_extractor(lr_img_batch, get_fea=True)
+    _c, h, w = base_image_chw_cuda.shape
+    video_filename = f"denoising_video_{base_filename}.mp4"
 
-    intermediate_residuals_list = generator.generate_residuals(
-        unet,
-        features=features_cuda,
-        num_images=1,
-        num_inference_steps=50,
-        return_intermediate_steps=True
+    save_dir_for_web = os.path.join(STATIC_FOLDER_PARENT_FOR_SCRIPT, WEB_APP_GENERATED_FOLDER_NAME, VIDEO_SUBDIR)
+
+    if __name__ == "__main__":
+        save_dir_actual = os.path.join(OUTPUT_DIR_FOR_SCRIPT_EXECUTION, VIDEO_SUBDIR)
+    else:
+        save_dir_actual = save_dir_for_web
+
+    os.makedirs(save_dir_actual, exist_ok=True)
+    full_video_path = os.path.join(save_dir_actual, video_filename)
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(full_video_path, fourcc, float(fps), (w, h))
+    print(f"Creating video with {len(intermediate_residuals_chw_list_cuda)} frames, saving to {full_video_path}...")
+
+    for residual_chw_cuda in tqdm(intermediate_residuals_chw_list_cuda, desc="Generating video frames"):
+        current_img_chw_cuda = torch.clamp(base_image_chw_cuda + residual_chw_cuda, -1.0, 1.0)
+        current_img_chw_0_1 = (current_img_chw_cuda + 1.0) / 2.0
+        frame_hwc_0_1 = current_img_chw_0_1.permute(1, 2, 0)
+        frame_np_uint8 = (frame_hwc_0_1.cpu().numpy() * 255).astype(np.uint8)
+        frame_bgr = cv2.cvtColor(frame_np_uint8, cv2.COLOR_RGB2BGR)
+        video_writer.write(frame_bgr)
+
+    video_writer.release()
+    print(f"Video saved successfully to {full_video_path}")
+
+    relative_path_for_web = os.path.join(VIDEO_SUBDIR, video_filename)
+    return relative_path_for_web
+
+# --- Main Upscale Function for app.py ---
+def upscale(input_lr_image_path: str,
+            target_lr_edge_size: int,
+            rrdb_weights_path: str = DEFAULT_RRDB_PATH,
+            unet_weights_path: str = DEFAULT_UNET_PATH,
+            num_inference_steps: int = 50,
+            device_str: str = "cuda"
+            ):
+    device = torch.device(device_str if torch.cuda.is_available() else "cpu")
+    print(f"Upscaling on device: {device}")
+    plot_relative_path = None 
+
+    print(f"Loading RRDBNet (context extractor) from: {rrdb_weights_path}")
+    try:
+        context_extractor = BasicRRDBNetTrainer.load_model_for_evaluation(
+            model_path=rrdb_weights_path,
+            device=device 
+        )
+        context_extractor.eval()
+    except Exception as e:
+        print(f"Error loading RRDBNet: {e}")
+        raise
+
+    print(f"Loading UNet from: {unet_weights_path}")
+    try:
+        unet_model = DiffusionTrainer.load_diffusion_unet(
+            model_path=unet_weights_path,
+            device=device 
+        ).eval()
+        
+        unet_checkpoint_path = unet_weights_path 
+        try:
+            unet_checkpoint = torch.load(unet_checkpoint_path, map_location='cpu', weights_only=False)
+            if unet_checkpoint is None:
+                print(f"Warning: torch.load returned None for UNet checkpoint {unet_checkpoint_path} when inspecting for mode/timesteps.")
+                diffusion_mode = 'noise' 
+                unet_model_config = {}   
+            else:
+                diffusion_mode = unet_checkpoint.get('mode', 'noise')
+                unet_model_config = unet_checkpoint.get('model_config', {})
+        except Exception as e_inspect:
+            print(f"Warning: Could not inspect UNet checkpoint {unet_checkpoint_path} for mode/timesteps due to error: {e_inspect}. Using defaults.")
+            diffusion_mode = 'noise' 
+            unet_model_config = {}   
+
+        loaded_timesteps = unet_model_config.get('timesteps', 1000)
+        print(f"  UNet diffusion mode: {diffusion_mode}")
+        print(f"  UNet timesteps for generator: {loaded_timesteps}")
+
+    except Exception as e:
+        print(f"Error loading UNet or its config: {e}")
+        raise
+
+    hr_image_edge_size = target_lr_edge_size * context_extractor.sr_scale 
+    generator = ResidualGenerator(
+        img_size=hr_image_edge_size, 
+        predict_mode=diffusion_mode, 
+        device=device,
+        num_train_timesteps=loaded_timesteps 
     )
 
-    final_predicted_residual_cuda = intermediate_residuals_list[-1]
+    lr_image_bchw_cuda = process_input_image(input_lr_image_path, target_lr_edge_size).to(device)
+    print(f"Processed LR image tensor shape: {lr_image_bchw_cuda.shape}")
 
-    base_for_video_cuda_chw = up_lr_img_cuda.squeeze(0)
-    residuals_for_video_chw_list = [res.squeeze(0) for res in intermediate_residuals_list]
-    video_filename = f"denoising_process_quang_img.mp4"
-    create_denoising_video(
-        base_image_chw_tensor=base_for_video_cuda_chw,
-        intermediate_residuals_chw_list=residuals_for_video_chw_list,
-        output_filename=video_filename,
+    with torch.no_grad():
+        # --- Debugging print statements ---
+        print(f"DEBUG: Type of context_extractor: {type(context_extractor)}")
+        print(f"DEBUG: Calling context_extractor with get_fea=True")
+        temp_return_value = context_extractor(lr_image_bchw_cuda, get_fea=True)
+        
+        if isinstance(temp_return_value, tuple):
+            print(f"DEBUG: Value returned by context_extractor is a tuple of length: {len(temp_return_value)}")
+            if len(temp_return_value) > 0:
+                print(f"DEBUG: Type of first element: {type(temp_return_value[0])}")
+            if len(temp_return_value) > 1:
+                print(f"DEBUG: Type of second element: {type(temp_return_value[1])}")
+        else:
+            print(f"DEBUG: Value returned by context_extractor is NOT a tuple. Type: {type(temp_return_value)}")
+        # --- End of debugging print statements ---
+        
+        try:
+            rrdb_output_hr_bchw_cuda, features_cuda = temp_return_value # Original unpacking line
+        except ValueError as ve:
+            print(f"DEBUG: ValueError during unpacking: {ve}")
+            print(f"DEBUG: temp_return_value was: {temp_return_value}")
+            raise ve # Re-raise the error after printing debug info
+
+    print(f"RRDBNet output (HR base) tensor shape: {rrdb_output_hr_bchw_cuda.shape}")
+    if features_cuda is not None and isinstance(features_cuda, list):
+        print(f"Number of feature maps from RRDBNet: {len(features_cuda)}")
+    elif features_cuda is None:
+        print("Warning: features_cuda from RRDBNet is None.")
+    else:
+        print(f"Warning: features_cuda from RRDBNet is not a list. Type: {type(features_cuda)}")
+
+
+    with torch.no_grad():
+        intermediate_residuals_list_cuda = generator.generate_residuals(
+            model=unet_model,
+            features=features_cuda, 
+            num_images=1, 
+            num_inference_steps=num_inference_steps,
+            return_intermediate_steps=True 
+        )
+    final_predicted_residual_hr_bchw_cuda = intermediate_residuals_list_cuda[-1]
+    print(f"Predicted residual tensor shape: {final_predicted_residual_hr_bchw_cuda.shape}")
+
+    final_hr_image_bchw_cuda = torch.clamp(rrdb_output_hr_bchw_cuda + final_predicted_residual_hr_bchw_cuda, -1.0, 1.0)
+
+    final_hr_image_chw_0_1 = (final_hr_image_bchw_cuda.squeeze(0).cpu() + 1.0) / 2.0
+    final_hr_image_hwc_0_1_np = final_hr_image_chw_0_1.permute(1, 2, 0).numpy()
+    final_hr_image_hwc_0_1_np = np.clip(final_hr_image_hwc_0_1_np, 0.0, 1.0)
+
+    base_input_filename = os.path.splitext(os.path.basename(input_lr_image_path))[0]
+
+    rrdb_output_hr_chw_cuda = rrdb_output_hr_bchw_cuda.squeeze(0)
+    intermediate_residuals_chw_list_cuda_squeezed = [res.squeeze(0) for res in intermediate_residuals_list_cuda]
+
+    video_relative_path = generate_video_for_web_app(
+        base_image_chw_cuda=rrdb_output_hr_chw_cuda,
+        intermediate_residuals_chw_list_cuda=intermediate_residuals_chw_list_cuda_squeezed,
+        base_filename=f"{base_input_filename}_lr{target_lr_edge_size}",
         fps=10
     )
+    if video_relative_path:
+        video_relative_path = video_relative_path.replace(os.sep, '/')
+        
+    return final_hr_image_hwc_0_1_np, video_relative_path, plot_relative_path
 
-    lr_plot = (lr_img_batch.squeeze(0).permute(1, 2, 0).cpu().numpy() + 1) / 2
-    up_lr_plot = (up_lr_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    final_residual_plot = (final_predicted_residual_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    constructed_img_cuda = torch.clamp(up_lr_img_cuda + final_predicted_residual_cuda, -1.0, 1.0)
-    constructed_plot = (constructed_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-
-    imgs_for_plot = [
-        np.clip(lr_plot,0,1),
-        np.clip(up_lr_plot,0,1),
-        np.clip(final_residual_plot,0,1),
-        np.clip(constructed_plot,0,1),
-    ]
-    plot_result(imgs_for_plot)
 
 if __name__ == '__main__':
-    upscale()
+    print("Running diffusion_upscale.py directly for testing...")
+    test_lr_image_path = 'data/000001.jpg' 
+    test_target_lr_edge_size = 160 
+
+    if not os.path.exists(test_lr_image_path):
+        print(f"Test image not found: {test_lr_image_path}")
+    elif not os.path.exists(DEFAULT_RRDB_PATH):
+         print(f"Default RRDBNet weights not found: {DEFAULT_RRDB_PATH}")
+    elif not os.path.exists(DEFAULT_UNET_PATH):
+         print(f"Default UNET weights not found: {DEFAULT_UNET_PATH}")
+    else:
+        try:
+            final_hr_image, video_path, plot_path_return = upscale( 
+                input_lr_image_path=test_lr_image_path,
+                target_lr_edge_size=test_target_lr_edge_size,
+            )
+            print(f"\n--- Test Execution Summary ---")
+            print(f"Final HR image shape: {final_hr_image.shape}, dtype: {final_hr_image.dtype}")
+            print(f"Final HR image value range: {final_hr_image.min()} to {final_hr_image.max()}")
+            print(f"Video saved relative to web app static: {video_path}")
+            print(f"Plot path (should be None): {plot_path_return}")
+        except Exception as e:
+            print(f"An error occurred during the test run: {e}")
+            import traceback
+            traceback.print_exc()
