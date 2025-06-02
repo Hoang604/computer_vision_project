@@ -131,10 +131,18 @@ def main():
     """
     Main function to set up and run the diffusion model inference for a single image.
     """
-    img_size = 64
-    rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
-    unet_path = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
-    img_path = '/home/hoang/python/cv_project/data/quang.jpeg'
+    img_size = 80
+    # rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
+    rrdb_path = 'checkpoints/rrdb/rrdb_320/rrdb_model_best.pth'
+    unet_path = 'checkpoints/diffusion/noise_320/diffusion_model_noise_best.pth'
+
+    folder = 'faces_dataset_small'
+    files = os.listdir(f'data/{folder}')
+    if not files:
+        print(f"No images found in 'data/{folder}'. Please check the directory.")
+        return
+    print(f"Found {len(files)} images in 'data/{folder}'.")
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -149,46 +157,50 @@ def main():
     ).eval()
     generator = ResidualGenerator(img_size=img_size * 4, predict_mode='noise', device=device)
 
-    
-    lr_img_batch = process_image(img_path, img_size).to(device)
-    print(f"Input image shape: {lr_img_batch.shape}, dtype: {lr_img_batch.dtype}")
-    print(f"Input image range: {lr_img_batch.min().item()} to {lr_img_batch.max().item()}")
-    with torch.no_grad():
-        up_lr_img_cuda, features_cuda = context_extractor(lr_img_batch, get_fea=True)
+    while True:
+        index = np.random.randint(0, len(files) - 1)
+        # 5541
+        print(f"Selected image index: {index}, filename: {files[index]}")
+        img_path = os.path.join(f'data/{folder}', files[index])
+        lr_img_batch = process_image(img_path, img_size).to(device)
+        print(f"Input image shape: {lr_img_batch.shape}, dtype: {lr_img_batch.dtype}")
+        print(f"Input image range: {lr_img_batch.min().item()} to {lr_img_batch.max().item()}")
+        with torch.no_grad():
+            up_lr_img_cuda, features_cuda = context_extractor(lr_img_batch, get_fea=True)
 
-    intermediate_residuals_list = generator.generate_residuals(
-        unet,
-        features=features_cuda,
-        num_images=1,
-        num_inference_steps=50,
-        return_intermediate_steps=True
-    )
+        intermediate_residuals_list = generator.generate_residuals(
+            unet,
+            features=features_cuda,
+            num_images=1,
+            num_inference_steps=50,
+            return_intermediate_steps=True
+        )
 
-    final_predicted_residual_cuda = intermediate_residuals_list[-1]
+        final_predicted_residual_cuda = intermediate_residuals_list[-1]
 
-    base_for_video_cuda_chw = up_lr_img_cuda.squeeze(0)
-    residuals_for_video_chw_list = [res.squeeze(0) for res in intermediate_residuals_list]
-    video_filename = f"denoising_process_quang_img.mp4"
-    create_denoising_video(
-        base_image_chw_tensor=base_for_video_cuda_chw,
-        intermediate_residuals_chw_list=residuals_for_video_chw_list,
-        output_filename=video_filename,
-        fps=10
-    )
+        # base_for_video_cuda_chw = up_lr_img_cuda.squeeze(0)
+        # residuals_for_video_chw_list = [res.squeeze(0) for res in intermediate_residuals_list]
+        # video_filename = f"denoising_process_quang_img.mp4"
+        # create_denoising_video(
+        #     base_image_chw_tensor=base_for_video_cuda_chw,
+        #     intermediate_residuals_chw_list=residuals_for_video_chw_list,
+        #     output_filename=video_filename,
+        #     fps=10
+        # )
 
-    lr_plot = (lr_img_batch.squeeze(0).permute(1, 2, 0).cpu().numpy() + 1) / 2
-    up_lr_plot = (up_lr_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    final_residual_plot = (final_predicted_residual_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    constructed_img_cuda = torch.clamp(up_lr_img_cuda + final_predicted_residual_cuda, -1.0, 1.0)
-    constructed_plot = (constructed_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+        lr_plot = (lr_img_batch.squeeze(0).permute(1, 2, 0).cpu().numpy() + 1) / 2
+        up_lr_plot = (up_lr_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+        final_residual_plot = (final_predicted_residual_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+        constructed_img_cuda = torch.clamp(up_lr_img_cuda + final_predicted_residual_cuda, -1.0, 1.0)
+        constructed_plot = (constructed_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
 
-    imgs_for_plot = [
-        np.clip(lr_plot,0,1),
-        np.clip(up_lr_plot,0,1),
-        np.clip(final_residual_plot,0,1),
-        np.clip(constructed_plot,0,1),
-    ]
-    plot_result(imgs_for_plot)
+        imgs_for_plot = [
+            np.clip(lr_plot,0,1),
+            np.clip(up_lr_plot,0,1),
+            np.clip(final_residual_plot,0,1),
+            np.clip(constructed_plot,0,1),
+        ]
+        plot_result(imgs_for_plot)
 
 if __name__ == '__main__':
     main()
