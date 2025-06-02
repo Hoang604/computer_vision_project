@@ -2,11 +2,11 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.utils import make_grid # Import for image logging
+from torchvision.utils import make_grid
 from tqdm import tqdm
 import os
 import datetime
-# import numpy as np # Not strictly needed in this file after corrections
+import numpy as np
 from src.diffusion_modules.rrdb import RRDBNet
 
 
@@ -194,7 +194,7 @@ class BasicRRDBNetTrainer:
 
     def _log_rrdb_sample_images(self, 
                                train_loader: DataLoader, 
-                               val_loader: DataLoader = None, 
+                               val_loader: DataLoader = None, # Added val_loader
                                epoch: int = 0, 
                                predict_residual: bool = False, 
                                num_samples=4):
@@ -202,21 +202,22 @@ class BasicRRDBNetTrainer:
         Logs a grid of sample images (LR, HR/Residual Target, HR/Residual Predicted) to TensorBoard.
         Prioritizes val_loader for samples if available.
         """
-        self.model.eval() 
+        self.model.eval() # Set model to evaluation mode for consistent output
         
         data_loader_for_samples = None
         source_name = ""
 
         if val_loader:
             try:
-                _ = next(iter(val_loader)) 
+                # Check if val_loader has data
+                _ = next(iter(val_loader)) # Try to get one item
                 data_loader_for_samples = val_loader
                 source_name = "Validation"
             except StopIteration:
                 print("Warning: val_loader is empty. Falling back to train_loader for image logging.") 
                 data_loader_for_samples = train_loader
                 source_name = "Training"
-            except Exception as e: 
+            except Exception as e: # Catch other potential errors with val_loader
                 print(f"Warning: Error with val_loader ({e}). Falling back to train_loader for image logging.") 
                 data_loader_for_samples = train_loader
                 source_name = "Training"
@@ -286,6 +287,17 @@ class BasicRRDBNetTrainer:
              ):
         """
         Main training loop for the BasicRRDBNet.
+        Args:
+            train_loader (DataLoader): DataLoader for training data.
+            epochs (int): Number of epochs to train.
+            val_loader (DataLoader): DataLoader for validation data (optional).
+            val_every_n_epochs (int): Validation frequency in epochs.
+            accumulation_steps (int): Number of steps for gradient accumulation.
+            log_dir_param (str): Directory for logging.
+            checkpoint_dir_param (str): Directory for saving checkpoints.
+            resume_checkpoint_path (str): Path to checkpoint for resuming training.
+            save_every_n_epochs (int): Frequency of saving checkpoints.
+            predict_residual (bool): Flag to predict residuals instead of HR images.
         """
 
         self._setup_logging_and_checkpointing(log_dir_param, checkpoint_dir_param)
@@ -407,6 +419,11 @@ class BasicRRDBNetTrainer:
     def save_checkpoint(self, epoch, loss_value, is_best_model=False, is_validation_loss=False): 
         """
         Saves the model checkpoint.
+        Args:
+            epoch (int): Current epoch number.
+            loss_value (float): Loss value to save.
+            is_best_model (bool): Flag indicating if this is the best model.
+            is_validation_loss (bool): Flag indicating if the loss is from validation.
         """
 
         if not self.checkpoint_dir:
@@ -446,6 +463,12 @@ class BasicRRDBNetTrainer:
     def load_checkpoint_for_resume(self, checkpoint_path: str):
         """
         Loads a checkpoint for resuming training.
+        Args:
+            checkpoint_path (str): Path to the checkpoint file.
+        Returns:
+            start_epoch_res (int): The epoch to resume training from.
+            global_step_optimizer_res (int): The global step of the optimizer.
+            loaded_loss_metric_from_checkpoint (float): The loss metric from the checkpoint.
         """
         start_epoch_res = 0
         global_step_optimizer_res = 0
@@ -457,7 +480,7 @@ class BasicRRDBNetTrainer:
 
         print(f"Loading checkpoint for resume from: {checkpoint_path}") 
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False) # Added weights_only=False
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
             
             loaded_trainer_configs = checkpoint.get('trainer_configs')
             if loaded_trainer_configs:
@@ -509,38 +532,31 @@ class BasicRRDBNetTrainer:
                                   device: str = 'cuda'):
         """
         Loads a pre-trained RRDBNet model for evaluation.
-        The model configuration is expected to be stored within the checkpoint.
+        Args:
+            model_path (str): Path to the pre-trained model checkpoint.
+            model_config (dict): Configuration dictionary for the model.
+            device (str): Device to load the model on ('cuda' or 'cpu').
+        Returns:
+            model (torch.nn.Module): The loaded RRDBNet model in evaluation mode.
         """
 
         if not os.path.isfile(model_path):
-            # This case should ideally not return an uninitialized model if config is unknown.
-            # Raising an error or returning None might be safer.
-            raise FileNotFoundError(f"Evaluation model checkpoint not found at {model_path}.")
+            print(f"Evaluation model checkpoint not found at {model_path}. Returning uninitialized model in eval mode.") 
+            return model.eval()
 
         print(f"Loading model for evaluation from: {model_path}") 
-        checkpoint = torch.load(model_path, map_location=device, weights_only=False) # Added weights_only=False
+        checkpoint = torch.load(model_path, map_location=device)
 
-        # Attempt to retrieve model_config from the checkpoint
-        if 'trainer_configs' in checkpoint and 'model_config' in checkpoint['trainer_configs']:
-            model_config = checkpoint['trainer_configs']['model_config']
-            print(f"Retrieved model_config from checkpoint: {model_config}")
-        else:
-            # Fallback or error if model_config is not in the checkpoint
-            # This part depends on how critical model_config is. If RRDBNet structure is fixed,
-            # default values might work, but it's risky.
-            # For now, let's assume it *must* be in the checkpoint for robust loading.
-            raise ValueError("Model configuration ('model_config') not found within 'trainer_configs' in the checkpoint.")
-
+        model_config = checkpoint.get('trainer_configs', {}).get('model_config', {})
         in_nc_val = model_config.get('in_nc', 3)
         out_nc_val = model_config.get('out_nc', 3)
         nf = model_config.get('num_feat', 64) 
-        nb = model_config.get('num_block', 17) # Adjusted default to match common usage in project
+        nb = model_config.get('num_block', 8) 
         gc_val = model_config.get('gc', 32)
         sr_scale_val = model_config.get('sr_scale', 4)
 
-        # Validate essential config values
-        if None in [nf, nb, sr_scale_val]: 
-            raise ValueError("Essential model_config keys ('num_feat', 'num_block', 'sr_scale') are missing or None.")
+        if nf is None or nb is None or sr_scale_val is None: 
+            raise ValueError("model_config must contain 'num_feat', 'num_block', and 'sr_scale'.") 
 
         model = RRDBNet(
             in_channels=in_nc_val, 
@@ -556,7 +572,6 @@ class BasicRRDBNetTrainer:
         if 'model_state_dict' in checkpoint:
             state_dict_to_load = checkpoint['model_state_dict']
         elif isinstance(checkpoint, dict) and not any(k.startswith('optimizer') or k == 'epoch' or k == 'trainer_configs' for k in checkpoint.keys()):
-            # This path assumes the checkpoint *is* the state_dict
             state_dict_to_load = checkpoint 
         
         if state_dict_to_load:
@@ -567,9 +582,6 @@ class BasicRRDBNetTrainer:
                 print(f"Eval Load Info: Unexpected keys in checkpoint: {incompatible_keys.unexpected_keys}") 
             print("Model weights loaded successfully for evaluation.") 
         else:
-            # This should not be reached if the checkpoint is valid and contains a state_dict
-            print(f"Failed to load model weights for evaluation from {model_path}. Checkpoint format might be incorrect or missing 'model_state_dict'.")
-            # Consider raising an error here too, as returning an uninitialized model can be misleading.
-            # For now, it matches previous behavior of returning model.eval()
+            print(f"Failed to load model weights for evaluation from {model_path}. Checkpoint format might be incorrect.") 
             
         return model.eval()
