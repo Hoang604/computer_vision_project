@@ -21,7 +21,6 @@ app = Flask(__name__)
 
 # Configuration
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
 
 # Configuration for upload and generated content folders
 UPLOAD_FOLDER = os.path.join(app.static_folder or 'static', 'uploads')
@@ -36,7 +35,7 @@ os.makedirs(GENERATED_FOLDER, exist_ok=True)
 # Allowed image extensions and resolution limits
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 MIN_RESOLUTION = 10
-MAX_RESOLUTION = 64 
+MAX_RESOLUTION = 256
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
