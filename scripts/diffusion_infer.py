@@ -77,11 +77,8 @@ def main():
     Main function to set up and run the diffusion model inference for a single image.
     """
     img_size = 160
-    rrdb_config = {'in_nc': 3, 'out_nc': 3, 'num_feat': 64, 'num_block': 17, 'gc': 32, 'sr_scale': 4}
     rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
-    unet_use_attention = True
-    unet_rrdb_num_blocks = 17
-    unet_path = 'checkpoints/diffusion/noise_20250522-230250/diffusion_model_noise_20250522-230250_best.pth'
+    unet_path = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
     img_folder = 'preprocessed_data/rrdb_processed_train'
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -89,7 +86,6 @@ def main():
 
     context_extractor = BasicRRDBNetTrainer.load_model_for_evaluation(
         model_path=rrdb_path,
-        model_config=rrdb_config,
         device=device
     )
     context_extractor.eval()
@@ -104,12 +100,7 @@ def main():
         print(f"No data found in {img_folder}. Exiting.")
         return
 
-    unet = Unet(
-        use_attention=unet_use_attention,
-        rrdb_num_blocks=unet_rrdb_num_blocks,
-        cond_dim=rrdb_config['num_feat']
-        ).to(device)
-    DiffusionTrainer.load_model_weights(unet, unet_path, verbose=True, device=device)
+    unet = DiffusionTrainer.load_diffusion_unet(unet_path, verbose=True, device=device)
     unet.eval()
 
     generator = ResidualGenerator(img_size=img_size, predict_mode='noise', device=device)

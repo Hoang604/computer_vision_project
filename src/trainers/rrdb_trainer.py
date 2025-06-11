@@ -545,7 +545,7 @@ class BasicRRDBNetTrainer:
             return model.eval()
 
         print(f"Loading model for evaluation from: {model_path}") 
-        checkpoint = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
         model_config = checkpoint.get('trainer_configs', {}).get('model_config', {})
         in_nc_val = model_config.get('in_nc', 3)

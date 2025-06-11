@@ -131,12 +131,11 @@ def main():
     """
     Main function to set up and run the diffusion model inference for a single image.
     """
-    img_size = 80
+    img_size = 40
     # rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
-    rrdb_path = 'checkpoints/rrdb/rrdb_320/rrdb_model_best.pth'
-    unet_path = 'checkpoints/diffusion/noise_320/diffusion_model_noise_best.pth'
-
-    folder = 'faces_dataset_small'
+    rrdb_path = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
+    unet_path = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
+    folder = 'hr_images'
     files = os.listdir(f'data/{folder}')
     if not files:
         print(f"No images found in 'data/{folder}'. Please check the directory.")
