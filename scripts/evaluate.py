@@ -19,9 +19,9 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
 # Import your project modules
-from utils.dataset import ImageDataset, ImageDatasetRRDB
-from rrdb_trainer import BasicRRDBNetTrainer
-from diffusion_trainer import DiffusionTrainer, ResidualGenerator
+from src.data_handling.dataset import ImageDataset, ImageDatasetRRDB
+from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
+from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
 
 class ImageQualityEvaluator:
     """
