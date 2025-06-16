@@ -9,8 +9,9 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import lpips
 from tqdm import tqdm
 import json
-from typing import Dict, List, Tuple, Optional
-import matplotlib.pyplot as plt
+from typing import Dict
+from torch.utils.data import DataLoader
+
 import sys
 
 # Add the project root to Python path
@@ -18,11 +19,9 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
 # Import your project modules
-from src.data_handling.dataset import ImageDataset, ImageDatasetRRDB
-from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
-from src.trainers.diffusion_trainer import DiffusionTrainer
-from src.diffusion_modules.unet import Unet
-
+from utils.dataset import ImageDataset, ImageDatasetRRDB
+from rrdb_trainer import BasicRRDBNetTrainer
+from diffusion_trainer import DiffusionTrainer, ResidualGenerator
 
 class ImageQualityEvaluator:
     """
@@ -135,18 +134,8 @@ def evaluate_rrdb_model(args):
     """Evaluate standalone RRDBNet model."""
     print("Evaluating RRDBNet model...")
     
-    # Load RRDBNet model
-    rrdb_config = {
-        'in_nc': 3, 'out_nc': 3, 
-        'num_feat': args.rrdb_num_feat, 
-        'num_block': args.rrdb_num_block, 
-        'gc': args.rrdb_gc, 
-        'sr_scale': args.downscale_factor
-    }
-    
     model = BasicRRDBNetTrainer.load_model_for_evaluation(
         model_path=args.rrdb_model_path,
-        model_config=rrdb_config,
         device=args.device
     )
     
@@ -158,6 +147,14 @@ def evaluate_rrdb_model(args):
     )
     
     evaluator = ImageQualityEvaluator(device=args.device)
+
+    data_loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,  # Keep order for consistent evaluation
+        num_workers=4,  # Adjust based on your system
+        pin_memory=True
+    )
     
     all_metrics = []
     num_samples = min(len(dataset), args.max_samples)
@@ -166,32 +163,14 @@ def evaluate_rrdb_model(args):
     
     model.eval()
     with torch.no_grad():
-        for i in tqdm(range(num_samples), desc="Evaluating RRDB"):
-            lr_img, _, hr_img, _ = dataset[i]
+        for batch in tqdm(data_loader, desc="Evaluating RRDB"):
+            lr_img, _, hr_img, _ = batch
             
             # Add batch dimension and move to device
-            lr_img = lr_img.unsqueeze(0).to(args.device)
-            hr_img = hr_img.unsqueeze(0).to(args.device)
+            lr_img = lr_img.to(args.device)
+            hr_img = hr_img.to(args.device)
             
-            # Generate prediction
-            if args.predict_residual:
-                # Model predicts residual, need bicubic upscaling
-                from src.utils.bicubic import upscale_image
-                lr_for_bicubic = (lr_img + 1.0) / 2.0  # Convert to [0,1] for bicubic
-                bicubic_up = upscale_image(
-                    lr_for_bicubic.squeeze(0),
-                    scale_factor=args.downscale_factor,
-                    save_image=False
-                )
-                if isinstance(bicubic_up, np.ndarray):
-                    bicubic_up = torch.from_numpy(bicubic_up).float()
-                bicubic_up = bicubic_up.permute(2, 0, 1).unsqueeze(0).to(args.device)
-                bicubic_up = bicubic_up * 2.0 - 1.0  # Convert back to [-1,1]
-                
-                residual = model(lr_img)
-                pred_hr = bicubic_up + residual
-            else:
-                pred_hr = model(lr_img)
+            pred_hr = model(lr_img)
             
             # Calculate metrics
             metrics = evaluator.evaluate_batch(pred_hr, hr_img)
@@ -205,104 +184,127 @@ def evaluate_rrdb_model(args):
     
     return avg_metrics
 
+def evaluate_diffusion_model_batched(args):
+    """
+    Evaluate diffusion model (refining RRDBNet output) using batch processing.
 
-def evaluate_diffusion_model(args):
-    """Evaluate diffusion model (refining RRDBNet output)."""
-    print("Evaluating Diffusion model...")
-    
-    # Load context extractor RRDBNet
-    context_config = {
-        'in_nc': 3, 'out_nc': 3,
-        'num_feat': args.rrdb_num_feat_context,
-        'num_block': args.rrdb_num_block_context,
-        'gc': args.rrdb_gc_context,
-        'sr_scale': args.downscale_factor
-    }
-    
+    This version is optimized to process multiple images in parallel, significantly
+    speeding up the evaluation process on a GPU.
+
+    Args:
+        args: An object or dictionary containing configuration, including:
+              - rrdb_context_model_path (str): Path to the RRDBNet model.
+              - diffusion_model_path (str): Path to the U-Net model.
+              - preprocessed_data_folder (str): Path to the dataset.
+              - img_size (int): Image size.
+              - downscale_factor (int): Downscaling factor.
+              - max_samples (int): Maximum number of samples to evaluate.
+              - num_inference_steps (int): Number of steps for diffusion generation.
+              - batch_size (int): Number of images to process in each batch.
+              - device (str): The device to run on ('cuda' or 'cpu').
+    """
+    print("Evaluating Diffusion model with batch processing...")
+
+    # 1. --- Initialization ---
+    device = args.device
     context_model = BasicRRDBNetTrainer.load_model_for_evaluation(
         model_path=args.rrdb_context_model_path,
-        model_config=context_config,
-        device=args.device
+        device=device
+    ).eval()
+
+    unet = DiffusionTrainer.load_diffusion_unet(
+        args.diffusion_model_path,
+        device=device
+    ).eval()
+
+    generator = ResidualGenerator(
+        img_size=160,  # Ensure this matches your model's expected input size
+        device=device,
+        predict_mode='noise'
     )
-    
-    # Load UNet
-    unet = Unet(
-        in_channels=3,
-        out_channels=3,
-        base_dim=args.unet_base_dim,
-        dim_mults=args.unet_dim_mults,
-        context_dim=sum([args.rrdb_num_feat_context * mult for mult in [1, 2, 4]]),  # Feature dimensions
-        use_attention=args.use_attention
-    ).to(args.device)
-    
-    # Load diffusion trainer for inference
-    diffusion_trainer = DiffusionTrainer(
-        model=unet,
-        diffusion_mode=args.diffusion_mode,
-        timesteps=args.timesteps,
-        device=args.device
-    )
-    
-    # Load checkpoint
-    checkpoint = torch.load(args.diffusion_model_path, map_location=args.device)
-    unet.load_state_dict(checkpoint['model_state_dict'])
-    
-    # Load preprocessed dataset
+
+    # Load dataset
     dataset = ImageDatasetRRDB(
         preprocessed_folder_path=args.preprocessed_data_folder,
         img_size=args.img_size,
         downscale_factor=args.downscale_factor,
         apply_hflip=False
     )
-    
-    evaluator = ImageQualityEvaluator(device=args.device)
-    
+    # Use a subset of the dataset if max_samples is specified
+    if args.max_samples < len(dataset):
+        dataset = torch.utils.data.Subset(dataset, range(args.max_samples))
+
+
+    # NEW: Use DataLoader for efficient batching
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,  # Keep order for consistent evaluation
+        num_workers=4,  # Adjust based on your system
+        pin_memory=True
+    )
+
+    evaluator = ImageQualityEvaluator(device=device)
     all_metrics = []
-    num_samples = min(len(dataset), args.max_samples)
-    
-    print(f"Evaluating on {num_samples} samples...")
-    
-    context_model.eval()
-    unet.eval()
-    
+
+    print(f"Evaluating on {len(dataset)} samples with batch size {args.batch_size}...")
+
+    # 2. --- Batch Evaluation Loop ---
     with torch.no_grad():
-        for i in tqdm(range(num_samples), desc="Evaluating Diffusion"):
-            lr_img, rrdb_upscaled, hr_img, _ = dataset[i]
-            
-            # Add batch dimension and move to device
-            lr_img = lr_img.unsqueeze(0).to(args.device)
-            rrdb_upscaled = rrdb_upscaled.unsqueeze(0).to(args.device)
-            hr_img = hr_img.unsqueeze(0).to(args.device)
-            
-            # Extract context features from LR image
-            context_features = context_model(lr_img, get_fea=True)[1]
-            
-            # Sample from diffusion model
-            refined_hr = diffusion_trainer.sample(
-                shape=(1, 3, args.img_size, args.img_size),
-                context=context_features,
-                initial_image=rrdb_upscaled,
-                num_inference_steps=args.num_inference_steps
+        # Iterate over batches from the DataLoader
+        for batch in tqdm(dataloader, desc="Evaluating Diffusion in Batches"):
+            lr_img, rrdb_upscaled, hr_img, _ = batch
+
+            # Move the entire batch to the target device
+            lr_img = lr_img.to(device)
+            rrdb_upscaled = rrdb_upscaled.to(device)
+            hr_img = hr_img.to(device)
+
+            # Extract context features for the whole batch at once
+            # This returns a list of tensors, e.g., [feats_level1, feats_level2]
+            # where each tensor has shape (batch_size, C, H, W)
+            context_features_batched = context_model(lr_img, get_fea=True)[1]
+
+            # Re-structure the batched features into the format expected by
+            # `generate_multiple_residuals`: a list of lists of features.
+            current_batch_size = lr_img.shape[0]
+            list_of_features = []
+            for i in range(current_batch_size):
+                # For each image in the batch, gather its corresponding feature slices
+                features_for_one_image = [feat_level[i:i+1] for feat_level in context_features_batched]
+                list_of_features.append(features_for_one_image)
+
+            # Generate all residuals for the batch in parallel
+            residuals_batch = generator.generate_multiple_residuals(
+                model=unet,
+                list_of_features=list_of_features,
+                num_inference_steps=args.num_inference_steps,
             )
-            
-            # Calculate metrics
-            metrics = evaluator.evaluate_batch(refined_hr, hr_img)
+
+            # Refine the entire batch of images
+            refined_hr_batch = rrdb_upscaled + residuals_batch
+
+            # Calculate metrics for the processed batch
+            metrics = evaluator.evaluate_batch(refined_hr_batch, hr_img)
             all_metrics.append(metrics)
-    
-    # Average metrics
+
+    # 3. --- Aggregate and Return Results ---
     avg_metrics = {}
-    for key in all_metrics[0].keys():
-        avg_metrics[key] = np.mean([m[key] for m in all_metrics])
-        avg_metrics[f'{key}_std'] = np.std([m[key] for m in all_metrics])
-    
+    if all_metrics:
+        for key in all_metrics[0].keys():
+            avg_metrics[key] = np.mean([m[key] for m in all_metrics])
+            avg_metrics[f'{key}_std'] = np.std([m[key] for m in all_metrics])
+    else:
+        print("Warning: No metrics were calculated.")
+
     return avg_metrics
+
+
 
 
 def evaluate_bicubic_baseline(args):
     """Evaluate bicubic interpolation baseline."""
     print("Evaluating Bicubic baseline...")
-    
-    from src.utils.bicubic import upscale_image
     
     # Load dataset
     dataset = ImageDataset(
@@ -312,19 +314,26 @@ def evaluate_bicubic_baseline(args):
     )
     
     evaluator = ImageQualityEvaluator(device=args.device)
+
+    data_loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=4, 
+        pin_memory=True
+    )
     
     all_metrics = []
     num_samples = min(len(dataset), args.max_samples)
     
     print(f"Evaluating on {num_samples} samples...")
     
-    for i in tqdm(range(num_samples), desc="Evaluating Bicubic"):
-        lr_img, bicubic_up, hr_img, _ = dataset[i]
-        
-        # The dataset already provides bicubic upscaled image
-        # Add batch dimension for evaluation
-        bicubic_up = bicubic_up.unsqueeze(0)
-        hr_img = hr_img.unsqueeze(0)
+    for batch in tqdm(data_loader, desc="Evaluating Bicubic"):
+        _, bicubic_up, hr_img, _ = batch
+
+        # Move to device
+        bicubic_up = bicubic_up.to(args.device)
+        hr_img = hr_img.to(args.device)
         
         # Calculate metrics
         metrics = evaluator.evaluate_batch(bicubic_up, hr_img)
@@ -412,6 +421,8 @@ def main():
                         help='Downscale factor for LR images')
     parser.add_argument('--max_samples', type=int, default=1000,
                         help='Maximum number of samples to evaluate')
+    parser.add_argument('--batch_size', type=int, default=128,
+                        help='Batch size for evaluation')
     
     # Model evaluation flags
     parser.add_argument('--eval_bicubic', action='store_true',
@@ -423,40 +434,25 @@ def main():
     
     # RRDBNet arguments
     parser.add_argument('--rrdb_model_path', type=str, help='Path to RRDBNet model checkpoint')
-    parser.add_argument('--rrdb_num_feat', type=int, default=64, help='Number of features for RRDBNet')
-    parser.add_argument('--rrdb_num_block', type=int, default=17, help='Number of RRDB blocks')
-    parser.add_argument('--rrdb_gc', type=int, default=32, help='Growth channel for RRDBNet')
-    parser.add_argument('--predict_residual', action='store_true',
-                        help='Whether RRDBNet predicts residual')
-    
+
     # Diffusion model arguments
     parser.add_argument('--diffusion_model_path', type=str, help='Path to diffusion model checkpoint')
 
     parser.add_argument('--rrdb_context_model_path', type=str, help='Path to RRDBNet context extractor checkpoint')
-
-    parser.add_argument('--rrdb_num_feat_context', type=int, default=64, help='Number of features for context RRDBNet')
-
-    parser.add_argument('--rrdb_num_block_context', type=int, default=17, help='Number of RRDB blocks for context extractor')
-    
-    parser.add_argument('--rrdb_gc_context', type=int, default=32, help='Growth channel for context RRDBNet')
-    
-    parser.add_argument('--unet_base_dim', type=int, default=64, help='Base dimension for UNet')
-    
-    parser.add_argument('--unet_dim_mults', type=int, nargs='+', default=[1, 2, 4, 8], help='Dimension multipliers for UNet')
-    
-    parser.add_argument('--use_attention', action='store_true', help='Use attention in UNet')
-    
-    parser.add_argument('--diffusion_mode', type=str, default='noise', choices=['noise', 'v_prediction'], help='Diffusion mode')
-    
-    parser.add_argument('--timesteps', type=int, default=1000, help='Number of diffusion timesteps')
     
     parser.add_argument('--num_inference_steps', type=int, default=50, help='Number of inference steps for sampling')
     
     # Output arguments
     parser.add_argument('--output_file', type=str, default='evaluation_results.json', help='Output file for results')
-    parser.add_argument('--device', type=str, default='cuda:0', help='Device to use for evaluation')
+    parser.add_argument('--device', type=str, default='cuda:1', help='Device to use for evaluation')
     
     args = parser.parse_args()
+
+    # print all args
+    print("Arguments:")
+    for arg, value in vars(args).items():
+        print(f"{arg}: {value}")
+    print("="*80)
     
     # Validate arguments
     if not (args.eval_bicubic or args.eval_rrdb or args.eval_diffusion):
@@ -494,7 +490,7 @@ def main():
     
     if args.eval_diffusion:
         try:
-            results['Diffusion'] = evaluate_diffusion_model(args)
+            results['Diffusion'] = evaluate_diffusion_model_batched(args)
         except Exception as e:
             print(f"Error evaluating diffusion model: {e}")
             import traceback

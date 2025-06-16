@@ -29,7 +29,7 @@ run_evaluation() {
     local extra_args=$3
     
     echo "Running $eval_type evaluation..."
-    python -m scripts.evaluate \
+    python evaluate.py \
         --test_data_folder "$TEST_DATA_FOLDER" \
         --preprocessed_data_folder "$PREPROCESSED_DATA_FOLDER" \
         --img_size $IMG_SIZE \
@@ -52,9 +52,7 @@ echo "Chọn method để evaluate:"
 echo "1) Bicubic baseline only"
 echo "2) RRDBNet only" 
 echo "3) Diffusion model only"
-echo "4) All methods (Bicubic + RRDBNet + Diffusion)"
-echo "5) Bicubic + RRDBNet"
-echo "6) RRDBNet + Diffusion"
+
 read -p "Nhập lựa chọn (1-6): " choice
 
 case $choice in
@@ -64,24 +62,16 @@ case $choice in
         ;;
     2)
         echo "Evaluating RRDBNet..."
-        run_evaluation "RRDBNet" "rrdb_evaluation.json" "--eval_rrdb --rrdb_model_path '$RRDB_MODEL_PATH' --rrdb_num_feat $RRDB_NUM_FEAT --rrdb_num_block $RRDB_NUM_BLOCK --rrdb_gc $RRDB_GC"
+        run_evaluation "RRDBNet" \
+                        "rrdb_evaluation.json" \
+                        "--eval_rrdb --rrdb_model_path $RRDB_MODEL_PATH"
         ;;
     3)
-        echo "Evaluating Diffusion model..."
-        run_evaluation "Diffusion" "diffusion_evaluation.json" "--eval_diffusion --diffusion_model_path '$DIFFUSION_MODEL_PATH' --rrdb_context_model_path '$RRDB_CONTEXT_PATH' --rrdb_num_feat_context $RRDB_NUM_FEAT --rrdb_num_block_context $RRDB_NUM_BLOCK --rrdb_gc_context $RRDB_GC --unet_base_dim $UNET_BASE_DIM --use_attention --timesteps 1000 --num_inference_steps 50"
-        ;;
-    4)
-        echo "Evaluating all methods..."
-        run_evaluation "All" "complete_evaluation.json" "--eval_bicubic --eval_rrdb --eval_diffusion --rrdb_model_path '$RRDB_MODEL_PATH' --diffusion_model_path '$DIFFUSION_MODEL_PATH' --rrdb_context_model_path '$RRDB_CONTEXT_PATH' --rrdb_num_feat $RRDB_NUM_FEAT --rrdb_num_block $RRDB_NUM_BLOCK --rrdb_gc $RRDB_GC --rrdb_num_feat_context $RRDB_NUM_FEAT --rrdb_num_block_context $RRDB_NUM_BLOCK --rrdb_gc_context $RRDB_GC --unet_base_dim $UNET_BASE_DIM --use_attention --timesteps 1000 --num_inference_steps 50"
-        ;;
-    5)
-        echo "Evaluating Bicubic + RRDBNet..."
-        run_evaluation "Bicubic+RRDBNet" "bicubic_rrdb_evaluation.json" "--eval_bicubic --eval_rrdb --rrdb_model_path '$RRDB_MODEL_PATH' --rrdb_num_feat $RRDB_NUM_FEAT --rrdb_num_block $RRDB_NUM_BLOCK --rrdb_gc $RRDB_GC"
-        ;;
-    6)
         echo "Evaluating RRDBNet + Diffusion..."
-        run_evaluation "RRDBNet+Diffusion" "rrdb_diffusion_evaluation.json" "--eval_rrdb --eval_diffusion --rrdb_model_path '$RRDB_MODEL_PATH' --diffusion_model_path '$DIFFUSION_MODEL_PATH' --rrdb_context_model_path '$RRDB_CONTEXT_PATH' --rrdb_num_feat $RRDB_NUM_FEAT --rrdb_num_block $RRDB_NUM_BLOCK --rrdb_gc $RRDB_GC --rrdb_num_feat_context $RRDB_NUM_FEAT --rrdb_num_block_context $RRDB_NUM_BLOCK --rrdb_gc_context $RRDB_GC --unet_base_dim $UNET_BASE_DIM --use_attention --timesteps 1000 --num_inference_steps 50"
-        ;;
+        run_evaluation "RRDBNet+Diffusion" "rrdb_diffusion_evaluation.json" "--eval_diffusion \
+         --diffusion_model_path $DIFFUSION_MODEL_PATH --rrdb_context_model_path $RRDB_CONTEXT_PATH\
+         --batch_size $BATCH_SIZE --num_inference_steps 50"
+        ;;        
     *)
         echo "Lựa chọn không hợp lệ!"
         exit 1

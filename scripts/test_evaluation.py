@@ -9,7 +9,7 @@ import json
 import sys
 
 # Add the project root to Python path
-sys.path.append('/home/nguyen_quoc_hieu/python/machine_learning/computer_vision_project')
+sys.path.append('/home/hoang/python/cv_project')
 
 from scripts.evaluate import ImageQualityEvaluator
 
