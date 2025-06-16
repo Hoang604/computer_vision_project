@@ -9,13 +9,11 @@ import logging
 from datetime import datetime
 import uuid
 
-# Assuming diffusion_upscale.py is in the parent directory's 'scripts' folder
-# Adjust the path if your structure is different
 import sys
 # Add the project root to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-# Ensure the import alias matches what's used, or use the direct function name
-from scripts.diffusion_upscale import upscale as RRDN_diff_upscale 
+
+from scripts.diffusion_upscale import upscale as RRDB_diff_upscale 
 
 app = Flask(__name__)
 
@@ -34,8 +32,8 @@ os.makedirs(GENERATED_FOLDER, exist_ok=True)
 
 # Allowed image extensions and resolution limits
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
-MIN_RESOLUTION = 10
-MAX_RESOLUTION = 256
+MIN_RESOLUTION = 20
+MAX_RESOLUTION = 128
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +48,8 @@ def validate_resolution(resolution_str):
     """Validate and return resolution as integer."""
     try:
         resolution = int(resolution_str)
+        if resolution % 2 != 0:
+            resolution += 1  # Ensure resolution is even
         if not (MIN_RESOLUTION <= resolution <= MAX_RESOLUTION):
             return None, f'Resolution must be between {MIN_RESOLUTION} and {MAX_RESOLUTION}'
         return resolution, None
@@ -121,7 +121,7 @@ def handle_upscale():
         # Perform upscaling
         logger.info(f"Starting upscaling process for {unique_filename} with resolution {resolution}")
         
-        upscaled_image_np, video_relative_filename, plot_path_none = RRDN_diff_upscale(
+        upscaled_image_np, video_relative_filename, plot_path_none = RRDB_diff_upscale(
             input_lr_image_path=temp_lr_path,
             target_lr_edge_size=resolution
         )

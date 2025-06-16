@@ -972,3 +972,68 @@ class ResidualGenerator:
             return intermediate_latents_list
         else:
             return generated_residuals
+        
+    @torch.no_grad()
+    def generate_multiple_residuals(self, model, list_of_features, num_inference_steps=50):
+        """
+        Generates multiple image residuals in parallel from a list of feature sets.
+
+        This method concatenates each corresponding feature tensor from the list into a single
+        batch, allowing for efficient parallel generation on a GPU.
+
+        Args:
+            model (torch.nn.Module): The pre-trained diffusion model (e.g., a U-Net).
+            list_of_features (list[list[torch.Tensor]]): A list where each element is a set of
+                                                          features for generating one image.
+                                                          For example: [[feat1_imgA, feat2_imgA], [feat1_imgB, feat2_imgB]].
+            num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
+
+        Returns:
+            torch.Tensor: A single tensor containing a batch of all generated residuals.
+                          Shape: [num_images, img_channels, img_size, img_size].
+        """
+        model.eval()
+        model.to(self.device)
+
+        if not list_of_features or not all(isinstance(f, list) for f in list_of_features):
+             raise ValueError("list_of_features must be a list of lists of tensors.")
+
+        num_images = len(list_of_features)
+        print(f"Starting parallel generation for {num_images} residuals...")
+
+        # --- Batching the features ---
+        # This part assumes that the structure of features is consistent across all items in the list.
+        # e.g., list_of_features = [[feat_A1, feat_B1], [feat_A2, feat_B2], ...]
+        # We want to create batched_features = [torch.cat([feat_A1, feat_A2]), torch.cat([feat_B1, feat_B2])]
+        num_feature_levels = len(list_of_features[0])
+        batched_features = []
+        for i in range(num_feature_levels):
+            # Concatenate the i-th feature from each set of features along the batch dimension (dim=0)
+            feature_level_batch = torch.cat([features[i] for features in list_of_features], dim=0)
+            batched_features.append(feature_level_batch.to(self.device))
+
+        print(f"Batched {len(batched_features)} feature levels. Example shape of first level: {batched_features[0].shape}")
+
+        self.scheduler.set_timesteps(num_inference_steps, device=self.device)
+
+        # Initialize noise for the entire batch
+        image_latents = torch.randn(
+            (num_images, self.img_channels, self.img_size, self.img_size),
+            device=self.device
+        )
+        image_latents = image_latents * self.scheduler.init_noise_sigma
+
+        # Denoising loop for the whole batch
+        for t_step in tqdm(self.scheduler.timesteps, desc=f"Generating {num_images} residuals"):
+            model_input = image_latents
+            t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device)
+
+            # The model receives the batched features
+            model_output = model(model_input, t_for_model, condition=batched_features)
+
+            scheduler_output = self.scheduler.step(model_output, t_step, image_latents)
+            image_latents = scheduler_output.prev_sample
+
+        generated_residuals = image_latents
+        print("Parallel residual generation complete.")
+        return generated_residuals

@@ -15,8 +15,11 @@ from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 from src.diffusion_modules.unet import Unet 
 
 # --- Configuration (Set these paths and parameters as needed) ---
-DEFAULT_RRDB_PATH = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
-DEFAULT_UNET_PATH = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
+RRDB_160_PATH = 'checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth'
+UNET_160_PATH = 'checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth'
+
+RRDB_320_PATH = 'checkpoints/rrdb/rrdb_320/rrdb_model_best.pth'
+UNET_320_PATH = 'checkpoints/diffusion/noise_320/diffusion_model_noise_best.pth'
 
 WEB_APP_GENERATED_FOLDER_NAME = 'generated_outputs'
 STATIC_FOLDER_PARENT_FOR_SCRIPT = os.path.join(os.path.dirname(__file__), '..', 'web_app', 'static')
@@ -96,11 +99,15 @@ def generate_video_for_web_app(base_image_chw_cuda, intermediate_residuals_chw_l
 # --- Main Upscale Function for app.py ---
 def upscale(input_lr_image_path: str,
             target_lr_edge_size: int,
-            rrdb_weights_path: str = DEFAULT_RRDB_PATH,
-            unet_weights_path: str = DEFAULT_UNET_PATH,
             num_inference_steps: int = 50,
             device_str: str = "cuda"
             ):
+    if target_lr_edge_size <= 60:
+        rrdb_weights_path = RRDB_160_PATH
+        unet_weights_path = UNET_160_PATH
+    else:
+        rrdb_weights_path = RRDB_320_PATH
+        unet_weights_path = UNET_320_PATH
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
     print(f"Upscaling on device: {device}")
     plot_relative_path = None 
@@ -221,31 +228,3 @@ def upscale(input_lr_image_path: str,
         video_relative_path = video_relative_path.replace(os.sep, '/')
         
     return final_hr_image_hwc_0_1_np, video_relative_path, plot_relative_path
-
-
-if __name__ == '__main__':
-    print("Running diffusion_upscale.py directly for testing...")
-    test_lr_image_path = 'data/000001.jpg' 
-    test_target_lr_edge_size = 160 
-
-    if not os.path.exists(test_lr_image_path):
-        print(f"Test image not found: {test_lr_image_path}")
-    elif not os.path.exists(DEFAULT_RRDB_PATH):
-         print(f"Default RRDBNet weights not found: {DEFAULT_RRDB_PATH}")
-    elif not os.path.exists(DEFAULT_UNET_PATH):
-         print(f"Default UNET weights not found: {DEFAULT_UNET_PATH}")
-    else:
-        try:
-            final_hr_image, video_path, plot_path_return = upscale( 
-                input_lr_image_path=test_lr_image_path,
-                target_lr_edge_size=test_target_lr_edge_size,
-            )
-            print(f"\n--- Test Execution Summary ---")
-            print(f"Final HR image shape: {final_hr_image.shape}, dtype: {final_hr_image.dtype}")
-            print(f"Final HR image value range: {final_hr_image.min()} to {final_hr_image.max()}")
-            print(f"Video saved relative to web app static: {video_path}")
-            print(f"Plot path (should be None): {plot_path_return}")
-        except Exception as e:
-            print(f"An error occurred during the test run: {e}")
-            import traceback
-            traceback.print_exc()
