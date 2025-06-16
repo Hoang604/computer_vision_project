@@ -13,5 +13,6 @@ test.py
 *.mp4
 processed_data
 inference_outputs
-web_app/Static
-web_app/uploads
+web_app/Static/
+web_app/uploads/
+web_app/static/

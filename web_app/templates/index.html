@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Super-Resolution</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #4A90E2;
+            /* Blue */
+            --primary-hover-color: #357ABD;
+            --secondary-color: #5C6F7D;
+            /* Grey-blue */
+            --success-color: #50E3C2;
+            /* Teal */
+            --success-hover-color: #3EC9A8;
+            --danger-color: #E25050;
+            /* Red */
+            --danger-hover-color: #C93E3E;
+            --warning-color: #F8E71C;
+            /* Yellow */
+            --warning-hover-color: #DBD115;
+            --light-bg: #F0F4F8;
+            /* Light Grey-blue */
+            --dark-bg: #E0E6EB;
+            --text-color: #333;
+            --text-muted: #7F8C8D;
+            /* Muted Grey */
+            --border-color: #DDE1E6;
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, .08);
+            --shadow-md: 0 8px 16px rgba(0, 0, 0, .15);
+            --border-radius-sm: .375rem;
+            /* 6px */
+            --border-radius-md: .75rem;
+            /* 12px */
+            --gradient-start: #667eea;
+            --gradient-end: #764ba2;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .main-container {
+            width: 95%;
+            max-width: 1400px;
+            min-height: 80vh;
+            margin: auto;
+            background-color: white;
+            box-shadow: var(--shadow-md);
+            border-radius: var(--border-radius-md);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        @media (min-width: 768px) {
+            .main-container {
+                flex-direction: row;
+            }
+        }
+
+        .pane {
+            padding: 30px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+            /* Make panes flexible */
+        }
+
+        .controls-pane {
+            min-width: 380px;
+            /* Slightly wider control pane */
+            background: linear-gradient(135deg, var(--light-bg) 0%, var(--dark-bg) 100%);
+            border-right: 1px solid var(--border-color);
+            justify-content: space-between;
+            /* Distribute content */
+        }
+
+        .results-pane {
+            background-color: var(--light-bg);
+            justify-content: center;
+            /* Center content vertically */
+        }
+
+        .image-placeholder,
+        .video-placeholder {
+            width: 100%;
+            max-width: 450px;
+            /* Larger placeholders */
+            min-height: 250px;
+            border: 2px dashed var(--border-color);
+            background-color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 25px;
+            /* More spacing */
+            border-radius: var(--border-radius-sm);
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s ease, background-color 0.3s ease;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .image-placeholder:hover,
+        .video-placeholder:hover {
+            border-color: var(--primary-color);
+            background-color: rgba(var(--primary-color), 0.05);
+        }
+
+        .image-placeholder img,
+        .video-placeholder video,
+        .results-pane img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: var(--border-radius-sm);
+            display: block;
+            /* Remove extra space below image */
+        }
+
+        .placeholder-text {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            text-align: center;
+            padding: 20px;
+            font-weight: 500;
+        }
+
+        .custom-button-container {
+            margin-top: 25px;
+            /* More spacing */
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            /* Stack buttons vertically in controls pane */
+            gap: 15px;
+            /* Spacing between stacked buttons */
+            align-items: center;
+        }
+
+        .results-pane .custom-button-container {
+            flex-direction: row;
+            /* Buttons in results pane can be horizontal */
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .custom-button {
+            padding: 14px 30px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            /* Bolder text */
+            color: white;
+            border: none;
+            border-radius: var(--border-radius-sm);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: var(--shadow-sm);
+            min-width: 180px;
+            /* Wider buttons */
+            position: relative;
+            overflow: hidden;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            /* Uppercase text */
+        }
+
+        .custom-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .custom-button:hover::before {
+            left: 100%;
+        }
+
+        .custom-button:hover {
+            transform: translateY(-3px);
+            /* More pronounced lift */
+            box-shadow: 0 6px 12px rgba(0, 0, 0, .2);
+        }
+
+        .custom-button:active {
+            transform: translateY(0px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .custom-button:disabled {
+            background-color: #B0B0B0;
+            /* Lighter disabled color */
+            cursor: not-allowed;
+            opacity: 0.6;
+            transform: none;
+        }
+
+        .custom-button:disabled::before {
+            display: none;
+        }
+
+        .upload-button {
+            background-color: var(--primary-color);
+        }
+
+        .upload-button:hover:not(:disabled) {
+            background-color: var(--primary-hover-color);
+        }
+
+        .start-popup-button {
+            background-color: var(--success-color);
+            color: var(--text-color);
+            /* Darker text for bright button */
+        }
+
+        .start-popup-button:hover:not(:disabled) {
+            background-color: var(--success-hover-color);
+        }
+
+        .play-video-button {
+            background-color: var(--secondary-color);
+        }
+
+        .play-video-button:hover:not(:disabled) {
+            background-color: #4A5C67;
+            /* Darker secondary */
+        }
+
+        .download-button {
+            background-color: var(--warning-color);
+            color: var(--text-color);
+        }
+
+        .download-button:hover:not(:disabled) {
+            background-color: var(--warning-hover-color);
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+            /* More spacing */
+            width: 100%;
+            max-width: 380px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 10px;
+            /* More spacing */
+            font-weight: 600;
+            /* Bolder label */
+            color: var(--text-color);
+            font-size: 1.05rem;
+        }
+
+        .form-group input[type="number"],
+        .form-group input[type="file"] {
+            width: 100%;
+            padding: 14px;
+            /* Larger padding */
+            border-radius: var(--border-radius-sm);
+            border: 2px solid var(--border-color);
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background-color: #fff;
+        }
+
+        .form-group input[type="file"] {
+            padding: 10px;
+            /* Adjust padding for file input */
+        }
+
+        .form-group input[type="number"]:focus,
+        .form-group input[type="file"]:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 .4rem rgba(74, 144, 226, .2);
+            /* Stronger focus shadow */
+            outline: none;
+        }
+
+        .form-group small {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            display: block;
+            margin-top: 8px;
+            /* More spacing */
+            font-style: italic;
+        }
+
+        .loader {
+            border: 5px solid #f0f0f0;
+            border-top: 5px solid var(--primary-color);
+            border-radius: 50%;
+            width: 60px;
+            /* Larger loader */
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 30px auto;
+            /* More margin */
+            display: none;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        h1,
+        h2 {
+            text-align: center;
+            color: var(--text-color);
+            font-weight: 700;
+            /* Bolder headings */
+            margin-bottom: 35px;
+            /* More spacing */
+        }
+
+        h1 {
+            font-size: 3rem;
+            /* Larger title */
+            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: none;
+            letter-spacing: 1.5px;
+        }
+
+        h2 {
+            font-size: 2rem;
+            /* Larger subtitle */
+            margin-bottom: 30px;
+            color: var(--primary-color);
+            /* Color for section titles */
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .status-message {
+            padding: 18px;
+            /* Larger padding */
+            border-radius: var(--border-radius-sm);
+            margin: 20px 0;
+            /* More margin */
+            font-weight: 500;
+            text-align: center;
+            font-size: 1rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .status-success {
+            background-color: #D4EDDA;
+            color: #155724;
+            border: 1px solid #C3E6CB;
+        }
+
+        .status-error {
+            background-color: #F8D7DA;
+            color: #721C24;
+            border: 1px solid #F5C6CB;
+        }
+
+        .status-info {
+            background-color: #D1ECF1;
+            color: #0C5460;
+            border: 1px solid #BEE5EB;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            /* Thicker progress bar */
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 15px 0;
+            /* More margin */
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .image-info {
+            background-color: #fff;
+            padding: 20px;
+            /* More padding */
+            border-radius: var(--border-radius-sm);
+            margin: 20px 0;
+            box-shadow: var(--shadow-sm);
+            width: 100%;
+            max-width: 450px;
+        }
+
+        .image-info h3 {
+            margin: 0 0 15px 0;
+            color: var(--primary-color);
+            /* Color for info heading */
+            font-size: 1.2rem;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .image-info p {
+            margin: 8px 0;
+            /* More spacing */
+            color: var(--text-muted);
+            font-size: 1rem;
+            display: flex;
+            justify-content: space-between;
+            /* Align text nicely */
+            padding-bottom: 5px;
+            border-bottom: 1px dashed var(--border-color);
+        }
+
+        .image-info p:last-child {
+            border-bottom: none;
+        }
+
+        .image-info p strong {
+            color: var(--text-color);
+            font-weight: 500;
+        }
+
+        .video-controls {
+            margin: 20px 0;
+            text-align: center;
+            display: flex;
+            justify-content: center;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+
+            .main-container {
+                width: 100%;
+            }
+
+            .pane {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 2.5rem;
+            }
+
+            h2 {
+                font-size: 1.6rem;
+            }
+
+            .custom-button {
+                min-width: unset;
+                /* Allow buttons to shrink */
+                width: 100%;
+                /* Take full width on small screens */
+                padding: 12px 20px;
+            }
+
+            .custom-button-container {
+                gap: 10px;
+                /* Smaller gap on small screens */
+            }
+
+            .image-placeholder,
+            .video-placeholder {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Image Super-Resolution</h1>
+    <div class="main-container">
+        <div class="controls-pane pane">
+            <h2>Controls</h2>
+            <form id="upscale-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="file-input">Upload Image:</label>
+                    <input type="file" id="file-input" name="img_file"
+                        accept="image/png, image/jpeg, image/jpg, image/webp" required>
+                    <small>Supported formats: PNG, JPG, JPEG, WebP (Max: 16MB)</small>
+                </div>
+
+                <div class="image-placeholder" id="lr-image-preview-placeholder">
+                    <span class="placeholder-text">Low Resolution Preview</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="resolution-input">Target LR Edge (pixels):</label>
+                    <input type="number" id="resolution-input" name="resolution" value="128" min="10" max="2048"
+                        step="16" required>
+                    <small>Final HR output will be 4x this resolution. Recommended: 128-512px</small>
+                </div>
+
+                <div class="progress-bar hidden" id="upload-progress">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+
+                <div class="custom-button-container">
+                    <button type="submit" class="start-popup-button custom-button" id="start-btn" disabled>
+                        Start Upscaling
+                    </button>
+                </div>
+            </form>
+
+            <div id="loader" class="loader hidden"></div>
+            <div id="status-message" class="hidden"></div>
+
+            <div class="image-placeholder hidden" id="plot-image-placeholder" style="margin-top: 30px;">
+                <span class="placeholder-text">Comparison Plot</span>
+            </div>
+        </div>
+
+        <div class="results-pane pane">
+            <h2>Results</h2>
+            <div class="image-placeholder" id="generated-image-placeholder">
+                <span class="placeholder-text">Upscaled Image Output</span>
+            </div>
+
+            <div class="image-info hidden" id="image-info">
+                <h3>Image Details</h3>
+                <p>Original: <strong id="original-size">--</strong></p>
+                <p>Upscaled: <strong id="upscaled-size">--</strong></p>
+                <p>Scale Factor: <strong id="scale-factor">--</strong></p>
+                <p>Processing Time: <strong id="processing-time">--</strong></p>
+            </div>
+
+            <div class="custom-button-container">
+                <button class="download-button custom-button hidden" id="download-btn" disabled>
+                    Download Result
+                </button>
+                <button class="play-video-button custom-button" id="play-video-btn" disabled>
+                    Play Process Video
+                </button>
+            </div>
+
+            <div class="video-placeholder hidden" id="video-player-container">
+                <video id="process-video" width="100%" height="100%" controls preload="metadata">
+                    Your browser does not support the video tag.
+                </video>
+                <div class="video-controls">
+                    <button class="custom-button" id="fullscreen-btn">
+                        Fullscreen Video
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const upscaleForm = document.getElementById('upscale-form');
+        const fileInput = document.getElementById('file-input');
+        const lrPreviewPlaceholder = document.getElementById('lr-image-preview-placeholder');
+        const startBtn = document.getElementById('start-btn');
+        const generatedImagePlaceholder = document.getElementById('generated-image-placeholder');
+        const playVideoBtn = document.getElementById('play-video-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const loader = document.getElementById('loader');
+        const statusMessage = document.getElementById('status-message');
+        const uploadProgress = document.getElementById('upload-progress');
+        const progressFill = document.getElementById('progress-fill');
+        const videoPlayerContainer = document.getElementById('video-player-container');
+        const processVideo = document.getElementById('process-video');
+        const plotImagePlaceholder = document.getElementById('plot-image-placeholder');
+        const imageInfo = document.getElementById('image-info');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+
+        // State variables
+        let videoURL = null;
+        let upscaledImageData = null;
+        let originalFileName = '';
+        let processingStartTime = null;
+
+        // Utility functions
+        function showStatus(message, type = 'info') {
+            statusMessage.className = `status-message status-${type}`;
+            statusMessage.textContent = message;
+            statusMessage.classList.remove('hidden');
+            setTimeout(() => {
+                statusMessage.classList.add('hidden');
+            }, 5000);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function resetUI() {
+            generatedImagePlaceholder.innerHTML = '<span class="placeholder-text">Upscaled Image Output</span>';
+            plotImagePlaceholder.classList.add('hidden');
+            plotImagePlaceholder.innerHTML = '<span class="placeholder-text">Comparison Plot</span>';
+            imageInfo.classList.add('hidden');
+            playVideoBtn.disabled = true;
+            downloadBtn.classList.add('hidden');
+            downloadBtn.disabled = true;
+            videoPlayerContainer.classList.add('hidden');
+            processVideo.src = '';
+            videoURL = null;
+            upscaledImageData = null;
+        }
+
+        function updateImageInfo(originalSize, upscaledSize, scaleFactor, processingTime) {
+            document.getElementById('original-size').textContent = originalSize;
+            document.getElementById('upscaled-size').textContent = upscaledSize;
+            document.getElementById('scale-factor').textContent = `${scaleFactor}x`;
+            document.getElementById('processing-time').textContent = `${processingTime}s`;
+            imageInfo.classList.remove('hidden');
+        }
+
+        // File input handler
+        fileInput.addEventListener('change', function (event) {
+            const file = event.target.files[0];
+            if (file) {
+                // Validate file size
+                if (file.size > 16 * 1024 * 1024) {
+                    showStatus('File size exceeds 16MB limit', 'error');
+                    fileInput.value = '';
+                    lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
+                    startBtn.disabled = true;
+                    return;
+                }
+
+                // Validate file type
+                if (!file.type.startsWith('image/')) {
+                    showStatus('Please select a valid image file', 'error');
+                    fileInput.value = '';
+                    lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
+                    startBtn.disabled = true;
+                    return;
+                }
+
+                originalFileName = file.name;
+                const reader = new FileReader();
+
+                reader.onload = function (e) {
+                    const img = new Image();
+                    img.onload = function () {
+                        lrPreviewPlaceholder.innerHTML = `<img src="${e.target.result}" alt="Uploaded image preview">`;
+                        startBtn.disabled = false;
+                        resetUI();
+                        showStatus(`Image loaded: ${img.width}x${img.height} (${formatFileSize(file.size)})`, 'success');
+                    };
+                    img.src = e.target.result;
+                };
+
+                reader.onerror = function () {
+                    showStatus('Error reading file', 'error');
+                    fileInput.value = '';
+                    lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
+                };
+
+                reader.readAsDataURL(file);
+            } else {
+                lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
+                startBtn.disabled = true;
+                resetUI();
+            }
+        });
+
+        // Form submission handler
+        upscaleForm.addEventListener('submit', async function (event) {
+            event.preventDefault();
+
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showStatus('Please upload an image first!', 'error');
+                return;
+            }
+
+            // UI updates for loading state
+            processingStartTime = Date.now();
+            loader.classList.remove('hidden');
+            startBtn.disabled = true;
+            playVideoBtn.disabled = true;
+            downloadBtn.disabled = true;
+            generatedImagePlaceholder.innerHTML = '<span class="placeholder-text">Processing... Please wait</span>';
+            plotImagePlaceholder.classList.add('hidden');
+            videoPlayerContainer.classList.add('hidden');
+            uploadProgress.classList.remove('hidden');
+            statusMessage.classList.add('hidden'); // Hide previous status message
+
+            // Simulate progress for user feedback
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += Math.random() * 5; // Slower progress
+                if (progress > 95) progress = 95; // Stop before 100%
+                progressFill.style.width = progress + '%';
+            }, 300); // More frequent updates
+
+            const formData = new FormData(upscaleForm);
+
+            try {
+                const response = await fetch('/upscale', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const result = await response.json();
+                clearInterval(progressInterval);
+                progressFill.style.width = '100%';
+
+                if (response.ok && result) {
+                    const processingTime = ((Date.now() - processingStartTime) / 1000).toFixed(2);
+
+                    // Display upscaled image
+                    upscaledImageData = result.upscaled_image_b64;
+                    generatedImagePlaceholder.innerHTML = `<img src="data:image/png;base64,${upscaledImageData}" alt="Upscaled Image">`;
+
+                    // Enable download button
+                    downloadBtn.classList.remove('hidden');
+                    downloadBtn.disabled = false;
+
+                    // Handle video
+                    videoURL = result.video_url;
+                    if (videoURL) {
+                        playVideoBtn.disabled = false;
+                        showStatus('Upscaling successful! Process video available.', 'success');
+                    } else {
+                        showStatus('Upscaling successful!', 'success');
+                    }
+
+                    // Handle plot
+                    if (result.plot_url) {
+                        plotImagePlaceholder.innerHTML = `<img src="${result.plot_url}?t=${new Date().getTime()}" alt="Comparison Plot">`;
+                        plotImagePlaceholder.classList.remove('hidden');
+                    }
+
+                    // Update image info
+                    const resolution = document.getElementById('resolution-input').value;
+                    updateImageInfo(
+                        `${resolution}px (LR)`,
+                        `${resolution * 4}px (HR)`,
+                        '4',
+                        processingTime
+                    );
+
+                } else {
+                    const errorMsg = result?.error || 'Unknown error occurred.';
+                    showStatus(`Error: ${errorMsg}`, 'error');
+                    generatedImagePlaceholder.innerHTML = `<span class="placeholder-text" style="color:var(--danger-color);">Error: ${errorMsg}</span>`;
+                }
+            } catch (error) {
+                console.error('Network error:', error);
+                clearInterval(progressInterval);
+                showStatus('Network error. Please check your connection and try again.', 'error');
+                generatedImagePlaceholder.innerHTML = '<span class="placeholder-text" style="color:var(--danger-color);">Network Error</span>';
+            } finally {
+                loader.classList.add('hidden');
+                uploadProgress.classList.add('hidden');
+                progressFill.style.width = '0%';
+                startBtn.disabled = false;
+
+                if (videoURL) {
+                    playVideoBtn.disabled = false;
+                }
+            }
+        });
+
+        // Video play button handler
+        playVideoBtn.addEventListener('click', function () {
+            if (videoURL) {
+                videoPlayerContainer.classList.remove('hidden');
+                processVideo.src = videoURL + `?t=${new Date().getTime()}`;
+
+                processVideo.addEventListener('loadstart', () => {
+                    showStatus('Loading video...', 'info');
+                }, { once: true }); // Use once: true to avoid multiple event listeners
+
+                processVideo.addEventListener('canplay', () => {
+                    showStatus('Video ready to play!', 'success');
+                }, { once: true });
+
+                processVideo.addEventListener('error', (e) => {
+                    console.error('Video error:', e);
+                    showStatus('Error loading video. The video file may be corrupted or not yet ready.', 'error');
+                    videoPlayerContainer.classList.add('hidden');
+                }, { once: true });
+
+                // Scroll to video
+                videoPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                showStatus('No video available. Please upscale an image first.', 'error');
+            }
+        });
+
+        // Download button handler
+        downloadBtn.addEventListener('click', function () {
+            if (upscaledImageData) {
+                const link = document.createElement('a');
+                link.download = `upscaled_${originalFileName.replace(/\.[^/.]+$/, '')}_4x.png`;
+                link.href = `data:image/png;base64,${upscaledImageData}`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showStatus('Image downloaded!', 'success');
+            }
+        });
+
+        // Fullscreen video handler
+        fullscreenBtn.addEventListener('click', function () {
+            if (processVideo.requestFullscreen) {
+                processVideo.requestFullscreen();
+            } else if (processVideo.webkitRequestFullscreen) { /* Safari */
+                processVideo.webkitRequestFullscreen();
+            } else if (processVideo.msRequestFullscreen) { /* IE11 */
+                processVideo.msRequestFullscreen();
+            }
+        });
+
+        // Drag and drop functionality
+        const dropZone = lrPreviewPlaceholder;
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.style.borderColor = 'var(--primary-color)';
+            dropZone.style.backgroundColor = 'rgba(74, 144, 226, 0.1)';
+        }
+
+        function unhighlight(e) {
+            dropZone.style.borderColor = 'var(--border-color)';
+            dropZone.style.backgroundColor = '#fff';
+        }
+
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                fileInput.files = files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        }
+    </script>
+</body>
+
+</html>
