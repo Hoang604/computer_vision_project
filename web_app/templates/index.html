@@ -57,11 +57,9 @@
         }
 
         .main-container {
-            width: 95%;
-            max-width: 1400px;
-            min-height: 80vh;
+            width: 98%;
             margin: auto;
-            background-color: white;
+            background-color: rgb(84, 107, 170);
             box-shadow: var(--shadow-md);
             border-radius: var(--border-radius-md);
             display: flex;
@@ -677,9 +675,55 @@
                 reader.onload = function (e) {
                     const img = new Image();
                     img.onload = function () {
-                        lrPreviewPlaceholder.innerHTML = `<img src="${e.target.result}" alt="Uploaded image preview">`;
+                        // Get the target size from the user input field
+                        const targetSize = parseInt(document.getElementById('resolution-input').value, 10);
+
+                        // Check if targetSize is a valid number
+                        if (isNaN(targetSize) || targetSize <= 0) {
+                            showStatus('Invalid target resolution value.', 'error');
+                            return; // Stop if the value is not valid
+                        }
+
+                        // --- STEP 1: USE A TEMPORARY CANVAS FOR HIGH-QUALITY DOWNSCALING ---
+                        // This canvas is used to downscale the original image to the target size
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = targetSize;
+                        tempCanvas.height = targetSize;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        tempCtx.imageSmoothingEnabled = true;
+                        tempCtx.imageSmoothingQuality = 'high'; // Request highest quality for downscaling
+
+                        // Draw the original image (img) into the temporary canvas, resizing it
+                        tempCtx.drawImage(img, 0, 0, targetSize, targetSize);
+                        // Now, tempCanvas holds the high-quality low-resolution (LR) image
+
+                        // --- STEP 2: USE THE FINAL CANVAS FOR NEAREST-NEIGHBOR UPSCALING ---
+                        // Determine the final canvas size (4x the target size)
+                        const finalCanvasSize = targetSize * 4;
+
+                        // Create the final canvas that will be displayed
+                        const finalCanvas = document.createElement('canvas');
+                        finalCanvas.width = finalCanvasSize;
+                        finalCanvas.height = finalCanvasSize;
+                        const finalCtx = finalCanvas.getContext('2d');
+
+                        // IMPORTANT: Disable image smoothing to achieve the "pixelated" Nearest Neighbor effect
+                        finalCtx.imageSmoothingEnabled = false;
+
+                        // Draw the LR image from the temp canvas into the final canvas,
+                        // scaling it up to fill the final canvas. This is where the upscaling happens.
+                        finalCtx.drawImage(tempCanvas, 0, 0, finalCanvasSize, finalCanvasSize);
+
+                        // Export the image from the final canvas to a new Data URL
+                        const finalImageDataURL = finalCanvas.toDataURL('image/png');
+
+                        // Display the final, upscaled preview image
+                        lrPreviewPlaceholder.innerHTML = `<img src="${finalImageDataURL}" alt="Nearest neighbor upscale preview">`;
+
+                        // The rest of the UI updates
                         startBtn.disabled = false;
                         resetUI();
+                        // Show the original loaded image's dimensions
                         showStatus(`Image loaded: ${img.width}x${img.height} (${formatFileSize(file.size)})`, 'success');
                     };
                     img.src = e.target.result;
