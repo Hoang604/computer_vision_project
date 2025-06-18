@@ -8,180 +8,233 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #4A90E2;
-            /* Blue */
-            --primary-hover-color: #357ABD;
-            --secondary-color: #5C6F7D;
-            /* Grey-blue */
-            --success-color: #50E3C2;
-            /* Teal */
-            --success-hover-color: #3EC9A8;
-            --danger-color: #E25050;
-            /* Red */
-            --danger-hover-color: #C93E3E;
-            --warning-color: #F8E71C;
-            /* Yellow */
-            --warning-hover-color: #DBD115;
-            --light-bg: #F0F4F8;
-            /* Light Grey-blue */
-            --dark-bg: #E0E6EB;
-            --text-color: #333;
-            --text-muted: #7F8C8D;
-            /* Muted Grey */
-            --border-color: #DDE1E6;
-            --shadow-sm: 0 2px 4px rgba(0, 0, 0, .08);
-            --shadow-md: 0 8px 16px rgba(0, 0, 0, .15);
-            --border-radius-sm: .375rem;
-            /* 6px */
-            --border-radius-md: .75rem;
-            /* 12px */
-            --gradient-start: #667eea;
-            --gradient-end: #764ba2;
+            --primary-color: #667eea;
+            --primary-hover-color: #5a67d8;
+            --secondary-color: #718096;
+            --success-color: #48bb78;
+            --success-hover-color: #38a169;
+            --warning-color: #ed8936;
+            --warning-hover-color: #dd6b20;
+            --text-color: #2d3748;
+            --text-muted: #718096;
+            --border-color: #e2e8f0;
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --border-radius-sm: 0.375rem;
+            --border-radius-md: 0.5rem;
+            --border-radius-lg: 0.75rem;
+            --border-radius-xl: 1rem;
+            --bg-card: rgba(255, 255, 255, 0.15);
+            --bg-glass: rgba(255, 255, 255, 0.1);
         }
-
+    
         * {
             box-sizing: border-box;
         }
-
+    
+        /* Animated Gradient Background */
         body {
-            font-family: 'Roboto', sans-serif;
+            font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             margin: 0;
             padding: 20px;
-            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+            background: linear-gradient(-45deg, #667eea, #405acc, #152b8a, #03135e);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
             color: var(--text-color);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            line-height: 1.6;
+            position: relative;
+            overflow-x: hidden;
         }
-
+    
+        @keyframes gradientShift {
+            0% {
+                background-position: 0% 50%;
+            }
+            50% {
+                background-position: 100% 50%;
+            }
+            100% {
+                background-position: 0% 50%;
+            }
+        }
+    
+        /* Enhanced Glass Morphism */
         .main-container {
-            width: 98%;
+            width: 95%;
+            max-width: 1400px;
             margin: auto;
-            background-color: rgb(84, 107, 170);
-            box-shadow: var(--shadow-md);
-            border-radius: var(--border-radius-md);
+            background: var(--bg-card);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
+            box-shadow: 
+                0 25px 45px rgba(0, 0, 0, 0.1),
+                0 0 0 1px rgba(255, 255, 255, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            border-radius: var(--border-radius-xl);
+            border: 1px solid rgba(255, 255, 255, 0.18);
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            position: relative;
         }
-
+    
+        .main-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+        }
+    
         @media (min-width: 768px) {
             .main-container {
                 flex-direction: row;
             }
         }
-
+    
         .pane {
-            padding: 30px;
+            padding: 2rem;
             margin: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
             flex: 1;
-            /* Make panes flexible */
+            position: relative;
         }
-
+    
         .controls-pane {
-            min-width: 380px;
-            /* Slightly wider control pane */
-            background: linear-gradient(135deg, var(--light-bg) 0%, var(--dark-bg) 100%);
-            border-right: 1px solid var(--border-color);
-            justify-content: space-between;
-            /* Distribute content */
+            min-width: 400px;
+            background: rgba(255, 255, 255, 0.08);
+            border-right: 1px solid rgba(255, 255, 255, 0.15);
+            justify-content: flex-start;
         }
-
+    
         .results-pane {
-            background-color: var(--light-bg);
-            justify-content: center;
-            /* Center content vertically */
+            background: rgba(255, 255, 255, 0.05);
+            justify-content: flex-start;
         }
-
+    
+        /* Enhanced File Upload Area */
         .image-placeholder,
         .video-placeholder {
             width: 100%;
             max-width: 450px;
-            /* Larger placeholders */
-            min-height: 250px;
-            border: 2px dashed var(--border-color);
-            background-color: #fff;
+            min-height: 280px;
+            border: 2px dashed rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 25px;
-            /* More spacing */
-            border-radius: var(--border-radius-sm);
+            margin-bottom: 1.5rem;
+            border-radius: var(--border-radius-lg);
             position: relative;
             overflow: hidden;
-            transition: border-color 0.3s ease, background-color 0.3s ease;
-            box-shadow: var(--shadow-sm);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
         }
-
+    
         .image-placeholder:hover,
         .video-placeholder:hover {
-            border-color: var(--primary-color);
-            background-color: rgba(var(--primary-color), 0.05);
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-4px);
+            box-shadow: 
+                0 12px 40px rgba(0, 0, 0, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
         }
-
+    
+        /* Add upload icon to placeholder */
+        .image-placeholder::before {
+            content: '📁';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -80%);
+            font-size: 3rem;
+            opacity: 0.6;
+            z-index: 1;
+        }
+    
+        .image-placeholder:has(img)::before {
+            display: none;
+        }
+    
         .image-placeholder img,
         .video-placeholder video,
         .results-pane img {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
-            border-radius: var(--border-radius-sm);
+            border-radius: var(--border-radius-md);
             display: block;
-            /* Remove extra space below image */
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
         }
-
+    
         .placeholder-text {
-            color: var(--text-muted);
+            color: rgba(255, 255, 255, 0.8);
             font-size: 1.1rem;
             text-align: center;
-            padding: 20px;
+            padding: 2rem;
             font-weight: 500;
+            letter-spacing: 0.025em;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            z-index: 2;
+            position: relative;
         }
-
+    
         .custom-button-container {
-            margin-top: 25px;
-            /* More spacing */
+            margin-top: 1.5rem;
             width: 100%;
             display: flex;
             flex-direction: column;
-            /* Stack buttons vertically in controls pane */
-            gap: 15px;
-            /* Spacing between stacked buttons */
+            gap: 1rem;
             align-items: center;
         }
-
+    
         .results-pane .custom-button-container {
             flex-direction: row;
-            /* Buttons in results pane can be horizontal */
             justify-content: center;
             flex-wrap: wrap;
+            gap: 0.75rem;
         }
-
+    
+        /* Enhanced Buttons with Icons */
         .custom-button {
-            padding: 14px 30px;
-            font-size: 1.05rem;
+            padding: 0.875rem 2rem;
+            font-size: 0.95rem;
             font-weight: 600;
-            /* Bolder text */
             color: white;
             border: none;
-            border-radius: var(--border-radius-sm);
+            border-radius: var(--border-radius-md);
             cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: var(--shadow-sm);
-            min-width: 180px;
-            /* Wider buttons */
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            min-width: 160px;
             position: relative;
             overflow: hidden;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-            /* Uppercase text */
+            letter-spacing: 0.025em;
+            text-transform: none;
+            font-family: inherit;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
         }
-
+    
         .custom-button::before {
             content: '';
             position: absolute;
@@ -189,316 +242,529 @@
             left: -100%;
             width: 100%;
             height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-            transition: left 0.5s;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.6s ease;
         }
-
+    
         .custom-button:hover::before {
             left: 100%;
         }
-
+    
         .custom-button:hover {
-            transform: translateY(-3px);
-            /* More pronounced lift */
-            box-shadow: 0 6px 12px rgba(0, 0, 0, .2);
+            transform: translateY(-2px);
+            box-shadow: 
+                0 12px 40px rgba(0, 0, 0, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
         }
-
+    
         .custom-button:active {
             transform: translateY(0px);
-            box-shadow: var(--shadow-sm);
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
         }
-
+    
         .custom-button:disabled {
-            background-color: #B0B0B0;
-            /* Lighter disabled color */
+            background-color: rgba(160, 174, 192, 0.6);
             cursor: not-allowed;
             opacity: 0.6;
             transform: none;
         }
-
+    
         .custom-button:disabled::before {
             display: none;
         }
-
-        .upload-button {
-            background-color: var(--primary-color);
+    
+        /* Button Icons */
+        .start-popup-button::before {
+            content: '🚀';
+            font-size: 1.2rem;
+            position: static;
+            background: none;
+            width: auto;
+            height: auto;
+            left: auto;
+            top: auto;
+            transform: none;
+            transition: none;
         }
-
-        .upload-button:hover:not(:disabled) {
-            background-color: var(--primary-hover-color);
+    
+        .play-video-button::before {
+            content: '▶️';
+            font-size: 1.2rem;
+            position: static;
+            background: none;
+            width: auto;
+            height: auto;
+            left: auto;
+            top: auto;
+            transform: none;
+            transition: none;
         }
-
+    
+        .download-button::before {
+            content: '⬇️';
+            font-size: 1.2rem;
+            position: static;
+            background: none;
+            width: auto;
+            height: auto;
+            left: auto;
+            top: auto;
+            transform: none;
+            transition: none;
+        }
+    
+        #fullscreen-btn::before {
+            content: '⛶';
+            font-size: 1.2rem;
+            position: static;
+            background: none;
+            width: auto;
+            height: auto;
+            left: auto;
+            top: auto;
+            transform: none;
+            transition: none;
+        }
+    
         .start-popup-button {
-            background-color: var(--success-color);
-            color: var(--text-color);
-            /* Darker text for bright button */
+            background: linear-gradient(135deg, var(--success-color), var(--success-hover-color));
         }
-
+    
         .start-popup-button:hover:not(:disabled) {
-            background-color: var(--success-hover-color);
+            background: linear-gradient(135deg, var(--success-hover-color), #2f855a);
         }
-
+    
         .play-video-button {
-            background-color: var(--secondary-color);
+            background: linear-gradient(135deg, var(--secondary-color), #4a5568);
         }
-
+    
         .play-video-button:hover:not(:disabled) {
-            background-color: #4A5C67;
-            /* Darker secondary */
+            background: linear-gradient(135deg, #4a5568, #2d3748);
         }
-
+    
         .download-button {
-            background-color: var(--warning-color);
-            color: var(--text-color);
+            background: linear-gradient(135deg, var(--warning-color), var(--warning-hover-color));
         }
-
+    
         .download-button:hover:not(:disabled) {
-            background-color: var(--warning-hover-color);
+            background: linear-gradient(135deg, var(--warning-hover-color), #c05621);
         }
-
+    
         .form-group {
-            margin-bottom: 25px;
-            /* More spacing */
+            margin-bottom: 1.5rem;
             width: 100%;
             max-width: 380px;
         }
-
+    
         .form-group label {
             display: block;
-            margin-bottom: 10px;
-            /* More spacing */
+            margin-bottom: 0.5rem;
             font-weight: 600;
-            /* Bolder label */
-            color: var(--text-color);
-            font-size: 1.05rem;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.95rem;
+            letter-spacing: 0.025em;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         }
-
+    
         .form-group input[type="number"],
         .form-group input[type="file"] {
             width: 100%;
-            padding: 14px;
-            /* Larger padding */
-            border-radius: var(--border-radius-sm);
-            border: 2px solid var(--border-color);
-            font-size: 1rem;
+            padding: 0.875rem;
+            border-radius: var(--border-radius-md);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            font-size: 0.95rem;
             transition: all 0.3s ease;
-            background-color: #fff;
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            color: rgba(255, 255, 255, 0.9);
         }
-
+    
         .form-group input[type="file"] {
-            padding: 10px;
-            /* Adjust padding for file input */
+            padding: 0.75rem;
         }
-
+    
         .form-group input[type="number"]:focus,
         .form-group input[type="file"]:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 .4rem rgba(74, 144, 226, .2);
-            /* Stronger focus shadow */
+            border-color: rgba(255, 255, 255, 0.6);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
             outline: none;
+            background-color: rgba(255, 255, 255, 0.15);
         }
-
+    
+        .form-group input[type="number"]::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+    
         .form-group small {
-            font-size: 0.9rem;
-            color: var(--text-muted);
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.7);
             display: block;
-            margin-top: 8px;
-            /* More spacing */
+            margin-top: 0.5rem;
             font-style: italic;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }
-
+    
         .loader {
-            border: 5px solid #f0f0f0;
-            border-top: 5px solid var(--primary-color);
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid rgba(255, 255, 255, 0.8);
             border-radius: 50%;
-            width: 60px;
-            /* Larger loader */
-            height: 60px;
+            width: 50px;
+            height: 50px;
             animation: spin 1s linear infinite;
-            margin: 30px auto;
-            /* More margin */
+            margin: 2rem auto;
             display: none;
         }
-
+    
         @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
-
-        h1,
-        h2 {
-            text-align: center;
-            color: var(--text-color);
-            font-weight: 700;
-            /* Bolder headings */
-            margin-bottom: 35px;
-            /* More spacing */
-        }
-
+    
         h1 {
-            font-size: 3rem;
-            /* Larger title */
-            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            text-shadow: none;
-            letter-spacing: 1.5px;
+            text-align: center;
+            margin-bottom: 2rem;
+            letter-spacing: -0.025em;
+            text-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            position: relative;
         }
-
-        h2 {
+    
+        h1::before {
+            content: '🎯';
+            position: absolute;
+            left: -3rem;
+            top: 50%;
+            transform: translateY(-50%);
             font-size: 2rem;
-            /* Larger subtitle */
-            margin-bottom: 30px;
-            color: var(--primary-color);
-            /* Color for section titles */
+            opacity: 0.8;
         }
-
+    
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 2rem;
+            letter-spacing: -0.025em;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+    
         .hidden {
             display: none !important;
         }
-
+    
         .status-message {
-            padding: 18px;
-            /* Larger padding */
-            border-radius: var(--border-radius-sm);
-            margin: 20px 0;
-            /* More margin */
+            padding: 1rem 1.5rem;
+            border-radius: var(--border-radius-md);
+            margin: 1rem 0;
             font-weight: 500;
             text-align: center;
-            font-size: 1rem;
-            box-shadow: var(--shadow-sm);
+            font-size: 0.9rem;
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
-
+    
         .status-success {
-            background-color: #D4EDDA;
-            color: #155724;
-            border: 1px solid #C3E6CB;
+            background: rgba(72, 187, 120, 0.2);
+            color: rgba(255, 255, 255, 0.9);
+            border-color: rgba(72, 187, 120, 0.3);
         }
-
+    
         .status-error {
-            background-color: #F8D7DA;
-            color: #721C24;
-            border: 1px solid #F5C6CB;
+            background: rgba(245, 101, 101, 0.2);
+            color: rgba(255, 255, 255, 0.9);
+            border-color: rgba(245, 101, 101, 0.3);
         }
-
+    
         .status-info {
-            background-color: #D1ECF1;
-            color: #0C5460;
-            border: 1px solid #BEE5EB;
+            background: rgba(102, 126, 234, 0.2);
+            color: rgba(255, 255, 255, 0.9);
+            border-color: rgba(102, 126, 234, 0.3);
         }
-
+    
         .progress-bar {
             width: 100%;
             height: 8px;
-            /* Thicker progress bar */
-            background-color: #e9ecef;
+            background: rgba(255, 255, 255, 0.1);
             border-radius: 4px;
             overflow: hidden;
-            margin: 15px 0;
-            /* More margin */
-            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin: 1rem 0;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(5px);
         }
-
+    
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, var(--primary-color), var(--success-color));
+            background: linear-gradient(90deg, #667eea, #48bb78);
             width: 0%;
             transition: width 0.3s ease;
             border-radius: 4px;
+            box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
         }
-
+    
         .image-info {
-            background-color: #fff;
-            padding: 20px;
-            /* More padding */
-            border-radius: var(--border-radius-sm);
-            margin: 20px 0;
-            box-shadow: var(--shadow-sm);
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            padding: 1.5rem;
+            border-radius: var(--border-radius-lg);
+            margin: 1.5rem 0;
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             width: 100%;
             max-width: 450px;
         }
-
+    
         .image-info h3 {
-            margin: 0 0 15px 0;
-            color: var(--primary-color);
-            /* Color for info heading */
-            font-size: 1.2rem;
+            margin: 0 0 1rem 0;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.1rem;
             font-weight: 600;
             text-align: center;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         }
-
+    
         .image-info p {
-            margin: 8px 0;
-            /* More spacing */
-            color: var(--text-muted);
-            font-size: 1rem;
+            margin: 0.75rem 0;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
             display: flex;
             justify-content: space-between;
-            /* Align text nicely */
-            padding-bottom: 5px;
-            border-bottom: 1px dashed var(--border-color);
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
         }
-
+    
         .image-info p:last-child {
             border-bottom: none;
         }
-
+    
         .image-info p strong {
-            color: var(--text-color);
-            font-weight: 500;
+            color: rgba(255, 255, 255, 0.9);
+            font-weight: 600;
         }
-
+    
         .video-controls {
-            margin: 20px 0;
+            margin: 1.5rem 0;
             text-align: center;
             display: flex;
             justify-content: center;
         }
-
+    
+        /* Enhanced responsiveness */
         @media (max-width: 768px) {
             body {
-                padding: 15px;
+                padding: 1rem;
             }
-
+            
             .main-container {
                 width: 100%;
             }
-
+            
             .pane {
-                padding: 20px;
+                padding: 1.5rem;
             }
-
+            
+            .controls-pane {
+                min-width: auto;
+            }
+            
             h1 {
-                font-size: 2.5rem;
+                font-size: 2rem;
             }
-
-            h2 {
-                font-size: 1.6rem;
+    
+            h1::before {
+                left: -2rem;
+                font-size: 1.5rem;
             }
-
+            
             .custom-button {
-                min-width: unset;
-                /* Allow buttons to shrink */
-                width: 100%;
-                /* Take full width on small screens */
-                padding: 12px 20px;
+                min-width: 140px;
+                padding: 0.75rem 1.5rem;
             }
+            
+            .results-pane .custom-button-container {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    
+        /* Smooth scrolling */
+        html {
+            scroll-behavior: smooth;
+        }
+    
+        /* Focus states */
+        .custom-button:focus {
+            outline: 2px solid rgba(255, 255, 255, 0.6);
+            outline-offset: 2px;
+        }
+    
+        /* Loading animation enhancement */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+    
+        .loader {
+            animation: spin 1s linear infinite, pulse 2s ease-in-out infinite;
+        }
+    
+        /* Drag and drop enhanced feedback */
+        .image-placeholder.drag-over {
+            border-color: rgba(255, 255, 255, 0.8) !important;
+            background: rgba(255, 255, 255, 0.2) !important;
+            transform: scale(1.02);
+            box-shadow: 
+                0 15px 45px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 0 20px rgba(102, 126, 234, 0.3);
+        }
 
-            .custom-button-container {
-                gap: 10px;
-                /* Smaller gap on small screens */
-            }
+        /* Custom File Upload Button Styles */
+        .form-group input[type="file"] {
+            width: 100%;
+            padding: 0;
+            border: none;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            background: transparent;
+            backdrop-filter: none;
+            color: rgba(255, 255, 255, 0.9);
+            position: relative;
+            opacity: 0;
+            z-index: 2;
+            cursor: pointer;
+            height: 3.5rem;
+        }
 
-            .image-placeholder,
-            .video-placeholder {
-                max-width: 100%;
+        /* Custom file upload button */
+        .file-upload-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+            margin-bottom: 0.5rem;
+        }
+
+        .file-upload-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            width: 100%;
+            padding: 1rem 1.5rem;
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-hover-color));
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: var(--border-radius-md);
+            color: white;
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(10px);
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+            letter-spacing: 0.025em;
+        }
+
+        .file-upload-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.6s ease;
+        }
+
+        .file-upload-button:hover::before {
+            left: 100%;
+        }
+
+        .file-upload-button:hover {
+            transform: translateY(-2px);
+            background: linear-gradient(135deg, var(--primary-hover-color), #4c51bf);
+            border-color: rgba(255, 255, 255, 0.4);
+            box-shadow: 
+                0 12px 40px rgba(0, 0, 0, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+
+        .file-upload-button:active {
+            transform: translateY(0px);
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        }
+
+        .file-upload-icon {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .file-upload-text {
+            flex: 1;
+            text-align: left;
+        }
+
+        .file-name-display {
+            margin-top: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: var(--border-radius-md);
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+            backdrop-filter: blur(10px);
+            word-break: break-all;
+            display: none;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        .file-name-display.show {
+            display: block;
+            animation: fadeInUp 0.3s ease;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
             }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* File upload focus state */
+        .form-group input[type="file"]:focus + .file-upload-button {
+            outline: 2px solid rgba(255, 255, 255, 0.6);
+            outline-offset: 2px;
+        }
+
+        /* Remove default file input styling completely */
+        .form-group input[type="file"]::-webkit-file-upload-button {
+            display: none;
+        }
+
+        .form-group input[type="file"]::file-selector-button {
+            display: none;
         }
     </style>
 </head>
@@ -511,8 +777,15 @@
             <form id="upscale-form" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="file-input">Upload Image:</label>
-                    <input type="file" id="file-input" name="img_file"
-                        accept="image/png, image/jpeg, image/jpg, image/webp" required>
+                    <div class="file-upload-wrapper">
+                        <input type="file" id="file-input" name="img_file"
+                            accept="image/png, image/jpeg, image/jpg, image/webp" required>
+                        <div class="file-upload-button">
+                            <span class="file-upload-icon">📁</span>
+                            <span class="file-upload-text">Choose Image File</span>
+                        </div>
+                        <div class="file-name-display" id="file-name-display"></div>
+                    </div>
                     <small>Supported formats: PNG, JPG, JPEG, WebP (Max: 16MB)</small>
                 </div>
 
@@ -601,6 +874,17 @@
         const imageInfo = document.getElementById('image-info');
         const fullscreenBtn = document.getElementById('fullscreen-btn');
 
+        document.addEventListener('DOMContentLoaded', function() {
+            const customFileButton = document.querySelector('.file-upload-button');
+            if (customFileButton) {
+                customFileButton.addEventListener('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    document.getElementById('file-input').click();
+                });
+            }
+        });
+
         // State variables
         let videoURL = null;
         let upscaledImageData = null;
@@ -650,40 +934,53 @@
         // File input handler
         fileInput.addEventListener('change', function (event) {
             const file = event.target.files[0];
+            const fileNameDisplay = document.getElementById('file-name-display');
+            
             if (file) {
+                // Show selected file name
+                fileNameDisplay.textContent = `Selected: ${file.name}`;
+                fileNameDisplay.classList.add('show');
+                
+                // Update button text
+                document.querySelector('.file-upload-text').textContent = 'Change Image File';
+            
                 // Validate file size
                 if (file.size > 16 * 1024 * 1024) {
                     showStatus('File size exceeds 16MB limit', 'error');
                     fileInput.value = '';
+                    fileNameDisplay.classList.remove('show');
+                    document.querySelector('.file-upload-text').textContent = 'Choose Image File';
                     lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
                     startBtn.disabled = true;
                     return;
                 }
-
+        
                 // Validate file type
                 if (!file.type.startsWith('image/')) {
                     showStatus('Please select a valid image file', 'error');
                     fileInput.value = '';
+                    fileNameDisplay.classList.remove('show');
+                    document.querySelector('.file-upload-text').textContent = 'Choose Image File';
                     lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
                     startBtn.disabled = true;
                     return;
                 }
-
+        
                 originalFileName = file.name;
                 const reader = new FileReader();
-
+        
                 reader.onload = function (e) {
                     const img = new Image();
                     img.onload = function () {
                         // Get the target size from the user input field
                         const targetSize = parseInt(document.getElementById('resolution-input').value, 10);
-
+        
                         // Check if targetSize is a valid number
                         if (isNaN(targetSize) || targetSize <= 0) {
                             showStatus('Invalid target resolution value.', 'error');
                             return; // Stop if the value is not valid
                         }
-
+        
                         // --- STEP 1: USE A TEMPORARY CANVAS FOR HIGH-QUALITY DOWNSCALING ---
                         // This canvas is used to downscale the original image to the target size
                         const tempCanvas = document.createElement('canvas');
@@ -692,34 +989,34 @@
                         const tempCtx = tempCanvas.getContext('2d');
                         tempCtx.imageSmoothingEnabled = true;
                         tempCtx.imageSmoothingQuality = 'high'; // Request highest quality for downscaling
-
+        
                         // Draw the original image (img) into the temporary canvas, resizing it
                         tempCtx.drawImage(img, 0, 0, targetSize, targetSize);
                         // Now, tempCanvas holds the high-quality low-resolution (LR) image
-
+        
                         // --- STEP 2: USE THE FINAL CANVAS FOR NEAREST-NEIGHBOR UPSCALING ---
                         // Determine the final canvas size (4x the target size)
                         const finalCanvasSize = targetSize * 4;
-
+        
                         // Create the final canvas that will be displayed
                         const finalCanvas = document.createElement('canvas');
                         finalCanvas.width = finalCanvasSize;
                         finalCanvas.height = finalCanvasSize;
                         const finalCtx = finalCanvas.getContext('2d');
-
+        
                         // IMPORTANT: Disable image smoothing to achieve the "pixelated" Nearest Neighbor effect
                         finalCtx.imageSmoothingEnabled = false;
-
+        
                         // Draw the LR image from the temp canvas into the final canvas,
                         // scaling it up to fill the final canvas. This is where the upscaling happens.
                         finalCtx.drawImage(tempCanvas, 0, 0, finalCanvasSize, finalCanvasSize);
-
+        
                         // Export the image from the final canvas to a new Data URL
                         const finalImageDataURL = finalCanvas.toDataURL('image/png');
-
+        
                         // Display the final, upscaled preview image
                         lrPreviewPlaceholder.innerHTML = `<img src="${finalImageDataURL}" alt="Nearest neighbor upscale preview">`;
-
+        
                         // The rest of the UI updates
                         startBtn.disabled = false;
                         resetUI();
@@ -728,15 +1025,19 @@
                     };
                     img.src = e.target.result;
                 };
-
+        
                 reader.onerror = function () {
                     showStatus('Error reading file', 'error');
                     fileInput.value = '';
+                    fileNameDisplay.classList.remove('show');
+                    document.querySelector('.file-upload-text').textContent = 'Choose Image File';
                     lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
                 };
-
+        
                 reader.readAsDataURL(file);
             } else {
+                fileNameDisplay.classList.remove('show');
+                document.querySelector('.file-upload-text').textContent = 'Choose Image File';
                 lrPreviewPlaceholder.innerHTML = '<span class="placeholder-text">Low Resolution Preview</span>';
                 startBtn.disabled = true;
                 resetUI();
