@@ -385,7 +385,6 @@ tqdm
 
 ## Future Work / TODO
 
-* Implement quantitative evaluation metrics (PSNR, SSIM, LPIPS).
 * Experiment with different noise schedulers and sampling methods for diffusion models.
 * Explore more advanced U-Net architectures or conditioning mechanisms.
 * Optimize inference speed (e.g., model quantization, ONNX conversion).
