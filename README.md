@@ -19,7 +19,7 @@ The project provides scripts for data preprocessing, model training, and inferen
     * Standalone RRDBNet for SR.
     * Diffusion model refining Bicubic upscaling (conditioned by RRDBNet features).
     * Diffusion model refining RRDBNet upscaling (conditioned by RRDBNet features).
-* **Modular Design**: Code is organized into `src/` for core modules (data handling, model definitions, trainers) and `scripts/` for executable workflows (training, inference).
+* **Modular Design**: Code is organized into `src/` for core modules (data handling, model definitions, trainers) and `scripts/` for executable workflows (training, inference) and /web_app for user interface.
 * **Flexible Training**:
     * Train RRDBNet for direct SR or residual prediction.
     * Train U-Net (Diffusion Model) to predict noise or 'v_prediction' for different residual targets.
@@ -31,6 +31,13 @@ The project provides scripts for data preprocessing, model training, and inferen
     * Preprocessing scripts in `src/data_handling/` to generate datasets for different training pipelines.
 * **Inference Scripts**: Ready-to-use scripts in `scripts/` to apply trained models to new images.
 * **TensorBoard Logging**: Integrated for monitoring training progress.
+* **Evaluation**: run_evaluation.sh for faster evaluation.
+
+## Launch website
+* **To launch website**
+```bash
+python3 web_app/app.py
+```
 
 ## Implemented Models and Techniques
 
