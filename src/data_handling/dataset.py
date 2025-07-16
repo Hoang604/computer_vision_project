@@ -8,27 +8,43 @@ from src.utils.bicubic import upscale_image
 
 
 class ImageDataset(Dataset):
-    def __init__(self, folder_path: str, img_size: int, downscale_factor: int, upscale_function=upscale_image):
+    def __init__(self, folder_path: str, img_size: int, downscale_factor: int, upscale_function=upscale_image, use_preprocessed: bool = True):
         """
         Initializes the dataset to load images and generate multiple versions.
         All output image tensors (low_res, upscaled, original_resized) will be in the range [-1, 1].
         The residual_image will be in the range [-2, 2].
 
         Args:
-            folder_path (str): Path to the folder containing images.
+            folder_path (str): Path to the folder containing images or preprocessed data.
             img_size (int): Target size for the 'original' processed image (height and width).
             downscale_factor (int): Factor by which to downscale the image for the low-resolution version.
                                    This is also the factor for upscaling the low-res image.
             upscale_function (callable): The actual function to use for upscaling images.
                                          It should expect a [0,1] range tensor and return a [0,1] range tensor.
+            use_preprocessed (bool): Whether to use preprocessed data if available. Defaults to True.
         """
         self.folder_path = folder_path
-        # Find image files - consider adding more extensions if needed
-        self.image_files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
-        self.original_len = len(self.image_files) # Store original number of files
         self.img_size = img_size
         self.downscale_factor = downscale_factor
-        self.upscale_image = upscale_function # Use the provided upscale function
+        self.upscale_image = upscale_function
+        self.use_preprocessed = use_preprocessed
+        
+        # Check if preprocessed data is available and should be used
+        if use_preprocessed and self._check_preprocessed_data_available():
+            print(f"Preprocessed bicubic data found. Using ImageDatasetBicubic for efficient loading.")
+            self.bicubic_dataset = ImageDatasetBicubic(
+                preprocessed_folder_path=folder_path,
+                img_size=img_size,
+                downscale_factor=downscale_factor,
+                apply_hflip=True  # Enable data augmentation
+            )
+            self.use_bicubic_dataset = True
+        else:
+            # Use original on-the-fly processing
+            self.use_bicubic_dataset = False
+            # Find image files - consider adding more extensions if needed
+            self.image_files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+            self.original_len = len(self.image_files) # Store original number of files
 
         if not isinstance(self.downscale_factor, int) or self.downscale_factor < 1:
             raise ValueError("downscale_factor must be an integer and >= 1.") 
@@ -39,11 +55,32 @@ class ImageDataset(Dataset):
                   "This might lead to slight dimension mismatches if not handled carefully by the upscale_image function "
                   "or require the safeguard resize.") 
 
-        print(f"Found {self.original_len} images in {folder_path}. Target original_img_size: {img_size}x{img_size}, downscale_factor: {downscale_factor}. Image range: [-1, 1].") 
+        if not self.use_bicubic_dataset:
+            print(f"Found {self.original_len} images in {folder_path}. Target original_img_size: {img_size}x{img_size}, downscale_factor: {downscale_factor}. Image range: [-1, 1].") 
+            print("Using on-the-fly processing. Consider preprocessing data for better performance.")
+
+    def _check_preprocessed_data_available(self):
+        """Check if preprocessed bicubic data is available in the folder_path."""
+        try:
+            required_subdirs = ['hr_original', 'lr', 'hr_bicubic_upscaled']
+            for subdir in required_subdirs:
+                subdir_path = os.path.join(self.folder_path, subdir)
+                if not os.path.isdir(subdir_path):
+                    return False
+                # Check if there are .pt files
+                pt_files = [f for f in os.listdir(subdir_path) if f.lower().endswith('.pt')]
+                if not pt_files:
+                    return False
+            return True
+        except:
+            return False
 
     def __len__(self):
         """ Returns the total size of the dataset (original + flipped). """
-        return self.original_len * 2 # Report double the length for data augmentation
+        if self.use_bicubic_dataset:
+            return len(self.bicubic_dataset)
+        else:
+            return self.original_len * 2 # Report double the length for data augmentation
 
     def __getitem__(self, idx):
         """
@@ -53,7 +90,7 @@ class ImageDataset(Dataset):
         The residual_image is the direct difference and will be in the [-2, 2] range.
 
         Args:
-            idx (int): Index of the item to retrieve (0 to 2*original_len - 1).
+            idx (int): Index of the item to retrieve.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -62,6 +99,10 @@ class ImageDataset(Dataset):
                 - original_image_resized (C, H_orig, W_orig), range [-1, 1]
                 - residual_image (C, H_orig, W_orig), range [-2, 2]
         """
+        if self.use_bicubic_dataset:
+            return self.bicubic_dataset[idx]
+        
+        # Original on-the-fly processing code
         # Determine if this index corresponds to a flipped image
         should_flip = idx >= self.original_len
 
@@ -151,8 +192,6 @@ class ImageDataset(Dataset):
             # Ensure the upscaled image tensor matches the dimensions of original_image_resized.
             if upscaled_image_tensor.shape[1:] != original_image_resized.shape[1:]:
                 
-                # print(f"Warning: Dimensions of upscaled image ({upscaled_image_tensor.shape[1:]}) "
-                #       f"do not match original_image_resized ({original_image_resized.shape[1:]}) for {img_path}. Resizing upscaled image.")
                 upscaled_image_tensor = TF.resize(
                     upscaled_image_tensor,
                     [self.img_size, self.img_size],
@@ -313,5 +352,123 @@ class ImageDatasetRRDB(Dataset):
         _dummy_residual = torch.zeros((dummy_c, self.img_size, self.img_size))
         # REMOVED: _dummy_lr_features
 
+
+class ImageDatasetBicubic(Dataset):
+    def __init__(self,
+                 preprocessed_folder_path: str,
+                 img_size: int,
+                 downscale_factor: int,
+                 apply_hflip: bool = False):
+        """
+        Initializes the dataset to load preprocessed bicubic tensors.
+        All output image tensors (low_res, upscaled_bicubic, original_hr)
+        will be in the range [-1, 1].
+        The residual_image will be in the range [-2, 2].
+
+        Args:
+            preprocessed_folder_path (str): Path to the folder containing preprocessed tensors
+                                          (subfolders: 'hr_original', 'lr', 'hr_bicubic_upscaled').
+            img_size (int): Target size for the 'original' HR image (height and width).
+            downscale_factor (int): Factor by which HR was downscaled to get LR.
+            apply_hflip (bool): Whether to apply horizontal flipping as data augmentation.
+        """
+        self.preprocessed_folder_path = preprocessed_folder_path
+        self.path_hr_original = os.path.join(preprocessed_folder_path, 'hr_original')
+        self.path_lr = os.path.join(preprocessed_folder_path, 'lr')
+        self.path_hr_bicubic_upscaled = os.path.join(preprocessed_folder_path, 'hr_bicubic_upscaled')
+
+        # Ensure required subdirectories exist
+        required_paths = [self.path_hr_original, self.path_lr, self.path_hr_bicubic_upscaled]
+        for p in required_paths:
+            if not os.path.isdir(p):
+                raise FileNotFoundError(
+                    f"Required subdirectory '{os.path.basename(p)}' not found in {preprocessed_folder_path}. "
+                    "Please run the bicubic preprocessing script first."
+                )
+
+        # Base file discovery on one of the existing tensor types, e.g., 'lr'
+        self.tensor_files_basenames = sorted(
+            [f for f in os.listdir(self.path_lr) if f.lower().endswith('.pt')]
+        )
+
+        if not self.tensor_files_basenames:
+            raise ValueError(f"No .pt files found in {self.path_lr}. Ensure preprocessing was successful.")
+
+        self.num_original_samples = len(self.tensor_files_basenames)
+        self.img_size = img_size
+        self.downscale_factor = downscale_factor
+        self.apply_hflip = apply_hflip
+
+        print(f"ImageDatasetBicubic: Found {self.num_original_samples} preprocessed tensor sets in {preprocessed_folder_path}.")
+        if self.apply_hflip:
+            print("Horizontal flipping augmentation is ENABLED.")
+        else:
+            print("Horizontal flipping augmentation is DISABLED.")
+
+    def __len__(self):
+        return self.num_original_samples * 2 if self.apply_hflip else self.num_original_samples
+
+    def __getitem__(self, idx):
+        """
+        Retrieves a tuple of image tensors:
+        (low_res_image, upscaled_image_bicubic, original_hr_image, residual_image)
+        Image tensors are in [-1, 1] (residual in [-2, 2]).
+
+        Args:
+            idx (int): Index of the item to retrieve.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                - low_res_image (C, H_low, W_low)
+                - upscaled_image_bicubic (C, H_orig, W_orig)
+                - original_hr_image (C, H_orig, W_orig)
+                - residual_image (C, H_orig, W_orig)
+        """
+        should_flip_this_sample = False
+        if self.apply_hflip:
+            should_flip_this_sample = idx >= self.num_original_samples
+            actual_idx = idx % self.num_original_samples
+        else:
+            actual_idx = idx
+
+        base_filename_pt = self.tensor_files_basenames[actual_idx]  # e.g., "image_001.pt"
+
+        try:
+            low_res_image = torch.load(os.path.join(self.path_lr, base_filename_pt)).clone()
+            original_hr_image = torch.load(os.path.join(self.path_hr_original, base_filename_pt)).clone()
+            upscaled_image_bicubic = torch.load(os.path.join(self.path_hr_bicubic_upscaled, base_filename_pt)).clone()
+
+            # --- Verification (optional but good for debugging) ---
+            if original_hr_image.shape[1] != self.img_size or original_hr_image.shape[2] != self.img_size:
+                print(f"Warning: Loaded original_hr_image for {base_filename_pt} has shape {original_hr_image.shape} "
+                      f"but expected H/W of {self.img_size}.")
+
+            # Apply horizontal flip if needed
+            if should_flip_this_sample:
+                low_res_image = TF.hflip(low_res_image)
+                original_hr_image = TF.hflip(original_hr_image)
+                upscaled_image_bicubic = TF.hflip(upscaled_image_bicubic)
+
+            residual_image = original_hr_image - upscaled_image_bicubic
+
+            return low_res_image, upscaled_image_bicubic, original_hr_image, residual_image
+
+        except FileNotFoundError as fnf_err:
+            print(f"Error: Preprocessed file not found for {base_filename_pt} at index {idx}. {fnf_err}")
+        except Exception as e:
+            print(f"Error loading or processing tensor for {base_filename_pt} at index {idx}: {e}")
+            import traceback
+            traceback.print_exc()  # Print full traceback for debugging
+
+        # Fallback dummy tensor creation (if any error occurred)
+        dummy_c = 3
+        dummy_lr_h = max(1, self.img_size // self.downscale_factor if self.downscale_factor > 0 else self.img_size)
+        dummy_lr_w = max(1, self.img_size // self.downscale_factor if self.downscale_factor > 0 else self.img_size)
+
+        _dummy_low_res = torch.zeros((dummy_c, dummy_lr_h, dummy_lr_w))
+        _dummy_upscaled_bicubic = torch.zeros((dummy_c, self.img_size, self.img_size))
+        _dummy_original_hr = torch.zeros((dummy_c, self.img_size, self.img_size))
+        _dummy_residual = torch.zeros((dummy_c, self.img_size, self.img_size))
+
         print(f"Warning: Returning dummy image data for index {idx} due to previous error.")
-        return _dummy_low_res, _dummy_upscaled_rrdb, _dummy_original_hr, _dummy_residual
+        return _dummy_low_res, _dummy_upscaled_bicubic, _dummy_original_hr, _dummy_residual

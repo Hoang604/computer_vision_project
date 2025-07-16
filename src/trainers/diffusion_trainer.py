@@ -7,6 +7,7 @@ import os
 import datetime
 from diffusers import DDIMScheduler # Keep this import
 from torch.utils.data import DataLoader # For type hinting
+from typing import Optional
 
 
 class DiffusionTrainer:
@@ -36,7 +37,8 @@ class DiffusionTrainer:
         self,
         timesteps=1000,
         device='cuda',
-        mode="v_prediction" # Added mode attribute
+        mode="v_prediction", # Added mode attribute
+        grad_clip_max_norm=1.0  # Added gradient clipping configuration
     ):
         """
         Initializes the DiffusionTrainer with a specified number of timesteps, device, and prediction mode.
@@ -51,16 +53,24 @@ class DiffusionTrainer:
             mode (str, optional): The prediction mode for the model during training.
                                   Can be "v_prediction" or "noise".
                                   Defaults to "v_prediction".
+            grad_clip_max_norm (float, optional): Maximum norm for gradient clipping.
+                                                 Set to None to disable gradient clipping.
+                                                 Defaults to 1.0.
         Raises:
             ValueError: If the provided `mode` is not "v_prediction" or "noise".
         """
         self.timesteps = timesteps
         self.device = device
+        self.grad_clip_max_norm = grad_clip_max_norm
 
         if mode not in ["v_prediction", "noise"]:
             raise ValueError("Mode must be 'v_prediction' or 'noise'") # Validate mode
         self.mode = mode
         print(f"DiffusionTrainer initialized in '{self.mode}' mode.") # Log initialization mode
+        if self.grad_clip_max_norm is not None:
+            print(f"Gradient clipping enabled with max_norm={self.grad_clip_max_norm}")
+        else:
+            print("Gradient clipping disabled")
 
 
         # Define cosine noise schedule using PyTorch tensors
@@ -268,18 +278,22 @@ class DiffusionTrainer:
 
         # --- Gradient Accumulation and Optimizer Step (if training) ---
         updated_optimizer_this_step = False
+        grad_norm = None
         if is_training:
             scaled_loss = loss / accumulation_steps
             scaled_loss.backward()
             current_accumulation_idx += 1
             if current_accumulation_idx >= accumulation_steps:
+                # Gradient clipping
+                if self.grad_clip_max_norm is not None:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=self.grad_clip_max_norm)
                 optimizer.step()
                 optimizer.zero_grad()
                 current_accumulation_idx = 0
                 global_step_optimizer +=1
                 updated_optimizer_this_step = True
 
-        return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step
+        return loss.detach().item(), current_accumulation_idx, global_step_optimizer, updated_optimizer_this_step, grad_norm
 
     def _run_validation_epoch(self, model, context_extractor, val_loader, writer, epoch):
         """Run a validation epoch and return the average validation loss."""
@@ -292,7 +306,7 @@ class DiffusionTrainer:
 
         with torch.no_grad(): # No gradients needed for validation
             for batch_idx, batch_data in enumerate(val_loader):
-                loss_value, _, _, _ = self._perform_batch_step(
+                loss_value, _, _, _, _ = self._perform_batch_step(
                     model, context_extractor, batch_data,
                     optimizer=None, # No optimizer needed for validation
                     accumulation_steps=1, current_accumulation_idx=0, global_step_optimizer=0, # Dummy values
@@ -522,12 +536,12 @@ class DiffusionTrainer:
 
 
     def train(self,
-                train_dataset: DataLoader,
-                model: torch.nn.Module,
+                train_dataset,
+                model,
                 optimizer,
                 scheduler=None,
-                context_extractor: torch.nn.Module = None,
-                val_dataset: DataLoader = None,
+                context_extractor=None,
+                val_dataset=None,
                 val_every_n_epochs: int = 1,
                 accumulation_steps=1,
                 epochs=100,
@@ -594,7 +608,7 @@ class DiffusionTrainer:
             train_epoch_losses = []
 
             for batch_idx, batch_data in enumerate(train_dataset):
-                loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer = self._perform_batch_step(
+                loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer, grad_norm = self._perform_batch_step(
                     model, context_extractor, batch_data, optimizer,
                     accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True
                 )
@@ -603,6 +617,10 @@ class DiffusionTrainer:
                 writer.add_scalar(f'Loss_{self.mode}/train_batch_step_raw', loss_value, batch_step_counter)
                 if updated_optimizer and optimizer.param_groups:
                          writer.add_scalar(f'LearningRate/optimizer_step', optimizer.param_groups[0]['lr'], global_step_optimizer)
+                
+                # Log gradient norm if available
+                if grad_norm is not None:
+                    writer.add_scalar(f'GradientNorm/train_step', grad_norm.item(), global_step_optimizer)
 
                 progress_bar_train.update(1)
                 progress_bar_train.set_postfix(loss=f"{loss_value:.4f}", opt_steps=global_step_optimizer, lr=f"{optimizer.param_groups[0]['lr']:.2e}")
@@ -628,10 +646,15 @@ class DiffusionTrainer:
         # --- After all epochs ---
         if current_accumulation_idx > 0: # If training ended mid-accumulation cycle
             print(f"Performing final optimizer step for {current_accumulation_idx} remaining accumulated gradients...")
+            # Final gradient clipping
+            if self.grad_clip_max_norm is not None:
+                final_grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=self.grad_clip_max_norm)
+                print(f"Final gradients applied (grad norm: {final_grad_norm:.4f}). Total optimizer steps: {global_step_optimizer}")
+            else:
+                print(f"Final gradients applied (no clipping). Total optimizer steps: {global_step_optimizer}")
             optimizer.step()
             optimizer.zero_grad()
             global_step_optimizer +=1
-            print(f"Final gradients applied. Total optimizer steps: {global_step_optimizer}")
 
         writer.close()
         print(f"Training finished for mode '{self.mode}'. Final best tracked loss: {current_best_val_loss_tracker:.4f}")

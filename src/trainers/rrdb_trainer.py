@@ -16,13 +16,15 @@ class BasicRRDBNetTrainer:
                  optimizer_config: dict,  # {'lr': 0.0002, 'beta1': 0.9, 'beta2': 0.999}
                  scheduler_config: dict = None, # Example: {'type': 'CosineAnnealingLR', 't_max': 100, 'eta_min': 0}
                  logging_config: dict = None,   # {'exp_name': 'my_exp', 'log_dir_base': 'logs', 'checkpoint_dir_base': 'ckpts'}
-                 device: str = 'cuda'):
+                 device: str = 'cuda',
+                 grad_clip_max_norm: float = 1.0):  # Added gradient clipping configuration
         
         self.device = device
         self.model_config = model_config
         self.optimizer_config = optimizer_config
         self.scheduler_config = scheduler_config if scheduler_config else {'type': 'none'} # Default to no scheduler
         self.logging_config = logging_config if logging_config else {}
+        self.grad_clip_max_norm = grad_clip_max_norm
 
         self.model = self._build_model().to(self.device)
         self.optimizer = self._build_optimizer(self.model)
@@ -42,7 +44,11 @@ class BasicRRDBNetTrainer:
         print(f"BasicRRDBNetTrainer initialized for device: {self.device}") 
         print(f"Model Config: {self.model_config}") 
         print(f"Optimizer Config: {self.optimizer_config}") 
-        print(f"Scheduler Config: {self.scheduler_config}") 
+        print(f"Scheduler Config: {self.scheduler_config}")
+        if self.grad_clip_max_norm is not None:
+            print(f"Gradient clipping enabled with max_norm={self.grad_clip_max_norm}")
+        else:
+            print("Gradient clipping disabled") 
 
     def _build_model(self):
         model = RRDBNet(
@@ -334,7 +340,11 @@ class BasicRRDBNetTrainer:
                 
                 current_accumulation_idx += 1
                 updated_optimizer_this_step = False
+                grad_norm = None
                 if current_accumulation_idx >= accumulation_steps:
+                    # Gradient clipping
+                    if self.grad_clip_max_norm is not None:
+                        grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_max_norm)
                     self.optimizer.step()
                     if self.scheduler and isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR):
                         self.scheduler.step()
@@ -351,6 +361,10 @@ class BasicRRDBNetTrainer:
                     self.writer.add_scalar('Train/Loss_batch_step', loss_value, self.batch_step_counter)
                     if updated_optimizer_this_step and self.optimizer.param_groups:
                          self.writer.add_scalar('Train/LearningRate_optimizer_step', self.optimizer.param_groups[0]['lr'], self.global_step_optimizer)
+                    
+                    # Log gradient norm if available
+                    if grad_norm is not None:
+                        self.writer.add_scalar('Train/GradientNorm_step', grad_norm.item(), self.global_step_optimizer)
                 
                 self.batch_step_counter += 1
                 progress_bar.update(1)
@@ -401,12 +415,17 @@ class BasicRRDBNetTrainer:
 
         if current_accumulation_idx > 0:
             print(f"Performing final optimizer step for {current_accumulation_idx} accumulated gradients...") 
+            # Final gradient clipping
+            if self.grad_clip_max_norm is not None:
+                final_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_max_norm)
+                print(f"Final gradients applied (grad norm: {final_grad_norm:.4f}). Total optimizer steps: {self.global_step_optimizer}")
+            else:
+                print(f"Final gradients applied (no clipping). Total optimizer steps: {self.global_step_optimizer}")
             self.optimizer.step()
             if self.scheduler and isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR):
                  self.scheduler.step()
             self.optimizer.zero_grad()
-            self.global_step_optimizer +=1
-            print(f"Final gradients applied. Total optimizer steps: {self.global_step_optimizer}") 
+            self.global_step_optimizer +=1 
 
         if self.writer:
             self.writer.close()

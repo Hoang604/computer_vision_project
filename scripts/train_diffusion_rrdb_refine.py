@@ -6,6 +6,7 @@ import argparse
 from src.diffusion_modules.unet import Unet 
 from src.trainers.diffusion_trainer import DiffusionTrainer
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer 
+from src.utils.setup import setup_device, create_dataloader, add_common_args, create_scheduler, print_config 
 
 def train_diffusion(args):
     """
@@ -18,15 +19,7 @@ def train_diffusion(args):
     assert context_mode_for_trainer in ['LR', 'HR'], "Context mode for trainer must be either 'LR' or 'HR'."
 
     # --- Setup Device ---
-    if args.device.startswith("cuda") and not torch.cuda.is_available():
-        print(f"CUDA device {args.device} requested but CUDA not available. Using CPU.")
-        device = torch.device("cpu")
-    elif not args.device.startswith("cuda") and args.device != "cpu":
-        print(f"Invalid device specified: {args.device}. Using CPU if CUDA not available, else cuda:0.")
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(args.device)
-    print(f"Using device: {device}")
+    device = setup_device(args.device)
 
     # --- Setup Dataset and DataLoader ---
     print(f"Loading preprocessed data (LR, HR_RRDB, HR_Orig) from: {args.preprocessed_data_folder}")
@@ -38,14 +31,15 @@ def train_diffusion(args):
     )
     print(f"Loaded {len(train_dataset)} samples for training.")
 
-    train_loader = DataLoader(
-        train_dataset,
+    train_loader = create_dataloader(
+        dataset=train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True
     )
+    
     val_loader = None
     if args.val_preprocessed_data_folder:
         print(f"Loading validation data from: {args.val_preprocessed_data_folder}")
@@ -56,8 +50,8 @@ def train_diffusion(args):
             apply_hflip=args.apply_val_hflip
         )
         print(f"Loaded {len(val_dataset)} samples for validation.")
-        val_loader = DataLoader(
-            val_dataset,
+        val_loader = create_dataloader(
+            dataset=val_dataset,
             batch_size=args.val_batch_size,
             shuffle=False,
             num_workers=args.num_workers,
@@ -83,8 +77,7 @@ def train_diffusion(args):
             raise FileNotFoundError(f"RRDBNet weights for context extractor not found at: {args.rrdb_weights_path_context_extractor}")
         context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(
             model_path=args.rrdb_weights_path_context_extractor,
-            model_config=rrdb_context_config,
-            device=device
+            device=str(device)
         )
         context_extractor_model.eval() # Set to evaluation mode
         print(f"RRDBNet context extractor loaded from {args.rrdb_weights_path_context_extractor}")
@@ -98,7 +91,7 @@ def train_diffusion(args):
     # --- Initialize DiffusionTrainer ---
     diffusion_trainer = DiffusionTrainer(
         timesteps=args.timesteps,
-        device=device,
+        device=str(device),
         mode=args.diffusion_mode, # 'v_prediction' or 'noise'
     )
 
@@ -177,7 +170,7 @@ def train_diffusion(args):
             train_dataset=train_loader,
             model=unet_model,
             optimizer=optimizer,
-            scheduler=scheduler if args.scheduler_type.lower() != "none" else None,
+            scheduler=scheduler,
             context_extractor=context_extractor_model,
             val_dataset=val_loader,
             val_every_n_epochs=args.val_every_n_epochs,
@@ -188,8 +181,7 @@ def train_diffusion(args):
             log_dir_param=args.continue_log_dir,
             checkpoint_dir_param=args.continue_checkpoint_dir,
             log_dir_base=args.base_log_dir,
-            checkpoint_dir_base=args.base_checkpoint_dir,
-            context_selection_mode=args.context
+            checkpoint_dir_base=args.base_checkpoint_dir
         )
     except Exception as train_error:
         print(f"\nERROR occurred during training: {train_error}")
@@ -202,7 +194,10 @@ def train_diffusion(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Diffusion Model with On-the-fly Feature Extraction and LR Scheduler Support")
 
-    # Dataset args
+    # Add common arguments (device, dataset, training, scheduler, etc.)
+    parser = add_common_args(parser, mode='train')
+
+    # Dataset-specific args
     parser.add_argument('--preprocessed_data_folder', type=str,
                         default=None,
                         help='Path to the folder containing preprocessed tensors (LR, HR_RRDB, HR_Orig).')
@@ -210,53 +205,7 @@ if __name__ == "__main__":
                         default=None,
                         help='Path to the folder containing preprocessed validation tensors (optional).')
 
-    parser.add_argument('--img_size', type=int, default=160,
-                        help='Target HR image size (used for verification in ImageDataset).')
-    parser.add_argument('--img_channels', type=int, default=3,
-                        help='Number of image channels.')
-    parser.add_argument('--downscale_factor', type=int, default=4,
-                        help='Downscale factor used during preprocessing.')
-    parser.add_argument('--apply_hflip', action='store_true',
-                        help='Apply horizontal flipping augmentation to the training data.')
-    parser.add_argument('--apply_val_hflip', action='store_true',
-                        help='Apply horizontal flipping augmentation to the validation data.')
-
-
-    # Training args
-    parser.add_argument('--device', type=str, default='cuda:1',
-                        help='Device to train on (e.g., cuda:0, cuda:1, cpu).')
-    parser.add_argument('--epochs', type=int, default=60,
-                        help='Number of training epochs.')
-    parser.add_argument('--batch_size', type=int, default=64,
-                        help='Batch size per device.')
-    parser.add_argument('--val_batch_size', type=int, default=64,
-                        help='Validation batch size per device.')
-    parser.add_argument('--accumulation_steps', type=int, default=4,
-                        help='Gradient accumulation steps (effective_batch_size = batch_size * accumulation_steps).')
-    parser.add_argument('--learning_rate', type=float, default=1e-4,
-                        help='Initial optimizer learning rate.')
-    parser.add_argument('--weight_decay', type=float, default=1e-2,
-                        help='Optimizer weight decay.')
-    parser.add_argument('--num_workers', type=int, default=4,
-                        help='DataLoader worker processes.')
-    parser.add_argument('--val_every_n_epochs', type=int, default=1,
-                        help='Frequency (in epochs) to run validation.')
-
-
-    # Scheduler args
-    parser.add_argument('--scheduler_type', type=str, default='cosineannealinglr',
-                        choices=['none', 'steplr', 'cosineannealinglr', 'exponentiallr'],
-                        help='Type of LR scheduler.')
-    parser.add_argument('--lr_decay_epochs', type=int, default=30,
-                        help='StepLR: decay LR every N epochs.')
-    parser.add_argument('--lr_gamma', type=float, default=0.1,
-                        help='StepLR/ExponentialLR: LR decay factor.')
-    parser.add_argument('--cosine_t_max_epochs', type=int, default=None,
-                        help='CosineAnnealingLR: T_max in epochs (defaults to total epochs if None).')
-    parser.add_argument('--eta_min_lr', type=float, default=1e-6,
-                        help='CosineAnnealingLR: minimum learning rate.')
-
-    # Diffusion args
+    # Diffusion-specific args
     parser.add_argument('--context', type=str, default='LR', choices=['LR', 'HR'],
                         help="Context mode for DiffusionTrainer (internal logic, U-Net condition is always from LR features).")
     parser.add_argument('--timesteps', type=int, default=1000,
@@ -276,11 +225,11 @@ if __name__ == "__main__":
     parser.add_argument('--rrdb_weights_path_context_extractor', type=str,
                         default='None',
                         help='Path to pre-trained RRDBNet weights used as the on-the-fly context extractor for U-Net.')
-    parser.add_argument('--rrdb_num_block_context', type=int, default=17, # Must match the context extractor RRDBNet's architecture AND U-Net's expectation
+    parser.add_argument('--rrdb_num_block_context', type=int, default=17,
                         help='Number of RRDB blocks (nb) in the context extractor RRDBNet.')
-    parser.add_argument('--rrdb_num_feat_context', type=int, default=64, # Must match the context extractor RRDBNet's architecture AND U-Net's cond_dim
+    parser.add_argument('--rrdb_num_feat_context', type=int, default=64,
                         help='Number of features (nf) in the context extractor RRDBNet.')
-    parser.add_argument('--rrdb_gc_context', type=int, default=32, # Must match the context extractor RRDBNet's architecture
+    parser.add_argument('--rrdb_gc_context', type=int, default=32,
                         help='Growth channel (gc) in the context extractor RRDBNet.')
 
     # Logging/Saving args
@@ -299,24 +248,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # --- Print Configuration ---
-    effective_batch_size = args.batch_size * args.accumulation_steps
-    print(f"--- Diffusion Model Training Configuration (On-the-fly Feature Extraction) ---")
-    print(f"Preprocessed Data Folder (LR, HR_RRDB, HR_Orig): {args.preprocessed_data_folder}")
-    print(f"Image Size (HR): {args.img_size}x{args.img_size}")
-    print(f"Device: {args.device}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch Size (per device): {args.batch_size}, Validation Batch Size: {args.val_batch_size}")
-    print(f"Accumulation Steps: {args.accumulation_steps}, Effective Batch Size: {effective_batch_size}")
-    print(f"Initial Learning Rate: {args.learning_rate}, Weight Decay: {args.weight_decay}")
-    print(f"Scheduler Type: {args.scheduler_type}")
-    # ... (print other relevant scheduler params based on type)
-    print(f"Diffusion Timesteps: {args.timesteps}, Mode: {args.diffusion_mode}")
-    print(f"UNet: base_dim={args.unet_base_dim}, dim_mults={tuple(args.unet_dim_mults)}, use_attention={args.use_attention}")
-    print(f"Context Extractor RRDBNet Weights: {args.rrdb_weights_path_context_extractor}")
-    print(f"Context Extractor RRDBNet Config for U-Net condition: nf={args.rrdb_num_feat_context}, nb={args.rrdb_num_block_context}, gc={args.rrdb_gc_context}")
-    if args.weights_path_unet: print(f"UNet Weights Path (for resume): {args.weights_path_unet}")
-    # ... (print other logging/saving args)
-    print(f"-----------------------------------------------------------------------------")
+    # Print configuration using common utility
+    print_config(args, "Diffusion Model Training Configuration")
 
     train_diffusion(args)

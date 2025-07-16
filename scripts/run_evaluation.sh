@@ -53,8 +53,6 @@ echo "1) Bicubic baseline only"
 echo "2) RRDBNet only" 
 echo "3) Diffusion model only"
 
-read -p "Nhập lựa chọn (1-6): " choice
-
 case $choice in
     1)
         echo "Evaluating Bicubic baseline..."

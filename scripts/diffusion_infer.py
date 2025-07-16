@@ -60,7 +60,7 @@ def create_denoising_video(base_image_chw_tensor, intermediate_residuals_chw_lis
     fourcc = cv2.VideoWriter_fourcc(*'H264')
     video_writer = cv2.VideoWriter(video_path, fourcc, float(fps), (w, h))
     print(f"Creating video with {len(intermediate_residuals_chw_list)} frames, saving to {video_path}...")
-    for i, residual_tensor in enumerate(tqdm(intermediate_residuals_chw_list, desc="Generating video frames")):
+    for _, residual_tensor in enumerate(tqdm(intermediate_residuals_chw_list, desc="Generating video frames")):
         residual_tensor = residual_tensor.to(base_image_chw_tensor.device)
         current_image_tensor = base_image_chw_tensor + residual_tensor
         current_image_tensor = torch.clamp(current_image_tensor, -1.0, 1.0)

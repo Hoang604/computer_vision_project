@@ -17,3 +17,51 @@ web_app/Static/
 web_app/uploads/
 web_app/static/
 test.html
+
+# Demo and temporary files
+demo_data/
+demo_checkpoints/
+demo_outputs/
+demo_visualizations/
+demo_training.py
+comprehensive_demo.py
+simple_demo.py
+*_demo_temp.py
+*.json
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

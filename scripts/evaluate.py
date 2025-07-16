@@ -22,6 +22,7 @@ sys.path.append(project_root)
 from src.data_handling.dataset import ImageDataset, ImageDatasetRRDB
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
+from src.utils.setup import setup_device, create_dataloader, add_common_args, print_config, create_dataset
 
 class ImageQualityEvaluator:
     """
@@ -34,7 +35,7 @@ class ImageQualityEvaluator:
     """
     
     def __init__(self, device='cuda:0' if torch.cuda.is_available() else 'cpu'):
-        self.device = device
+        self.device = setup_device(device) if isinstance(device, str) else device
         
         # Initialize LPIPS model
         self.lpips_fn = lpips.LPIPS(net='alex').to(device)
@@ -139,21 +140,25 @@ def evaluate_rrdb_model(args):
         device=args.device
     )
     
-    # Load dataset
-    dataset = ImageDataset(
+    # Load dataset using common utility
+    dataset = create_dataset(
+        dataset_type='standard',
         folder_path=args.test_data_folder,
         img_size=args.img_size,
-        downscale_factor=args.downscale_factor
+        downscale_factor=args.downscale_factor,
+        use_preprocessed=False
     )
     
-    evaluator = ImageQualityEvaluator(device=args.device)
+    evaluator = ImageQualityEvaluator(device=str(args.device))
 
-    data_loader = DataLoader(
-        dataset,
+    # Create DataLoader using common utility
+    data_loader = create_dataloader(
+        dataset=dataset,
         batch_size=args.batch_size,
         shuffle=False,  # Keep order for consistent evaluation
-        num_workers=4,  # Adjust based on your system
-        pin_memory=True
+        num_workers=4,
+        pin_memory=True,
+        drop_last=False
     )
     
     all_metrics = []
@@ -244,7 +249,7 @@ def evaluate_diffusion_model_batched(args):
         pin_memory=True
     )
 
-    evaluator = ImageQualityEvaluator(device=device)
+    evaluator = ImageQualityEvaluator(device=str(device))
     all_metrics = []
 
     print(f"Evaluating on {len(dataset)} samples with batch size {args.batch_size}...")
@@ -299,12 +304,12 @@ def evaluate_diffusion_model_batched(args):
 
     return avg_metrics
 
-
-
-
 def evaluate_bicubic_baseline(args):
     """Evaluate bicubic interpolation baseline."""
     print("Evaluating Bicubic baseline...")
+    
+    # Setup device  
+    device = setup_device(args.device)
     
     # Load dataset
     dataset = ImageDataset(
@@ -313,13 +318,13 @@ def evaluate_bicubic_baseline(args):
         downscale_factor=args.downscale_factor
     )
     
-    evaluator = ImageQualityEvaluator(device=args.device)
+    evaluator = ImageQualityEvaluator(device=str(device))
 
-    data_loader = DataLoader(
-        dataset,
+    data_loader = create_dataloader(
+        dataset=dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=4, 
+        num_workers=4,
         pin_memory=True
     )
     
@@ -410,19 +415,14 @@ def print_results(results: Dict):
 def main():
     parser = argparse.ArgumentParser(description='Evaluate image super-resolution models')
     
-    # Data arguments
+    # Add common arguments
+    parser = add_common_args(parser, mode='eval')
+    
+    # Add evaluation-specific arguments
     parser.add_argument('--test_data_folder', type=str, required=True,
                         help='Path to test data folder containing HR images')
     parser.add_argument('--preprocessed_data_folder', type=str,
                         help='Path to preprocessed data folder for diffusion evaluation')
-    parser.add_argument('--img_size', type=int, default=160,
-                        help='Target HR image size')
-    parser.add_argument('--downscale_factor', type=int, default=4,
-                        help='Downscale factor for LR images')
-    parser.add_argument('--max_samples', type=int, default=1000,
-                        help='Maximum number of samples to evaluate')
-    parser.add_argument('--batch_size', type=int, default=128,
-                        help='Batch size for evaluation')
     
     # Model evaluation flags
     parser.add_argument('--eval_bicubic', action='store_true',
@@ -437,22 +437,16 @@ def main():
 
     # Diffusion model arguments
     parser.add_argument('--diffusion_model_path', type=str, help='Path to diffusion model checkpoint')
-
     parser.add_argument('--rrdb_context_model_path', type=str, help='Path to RRDBNet context extractor checkpoint')
-    
     parser.add_argument('--num_inference_steps', type=int, default=50, help='Number of inference steps for sampling')
-    
-    # Output arguments
-    parser.add_argument('--output_file', type=str, default='evaluation_results.json', help='Output file for results')
-    parser.add_argument('--device', type=str, default='cuda:1', help='Device to use for evaluation')
     
     args = parser.parse_args()
 
-    # print all args
-    print("Arguments:")
-    for arg, value in vars(args).items():
-        print(f"{arg}: {value}")
-    print("="*80)
+    # Setup device
+    args.device = setup_device(args.device)
+
+    # Print configuration
+    print_config(args, "Evaluation Configuration")
     
     # Validate arguments
     if not (args.eval_bicubic or args.eval_rrdb or args.eval_diffusion):
