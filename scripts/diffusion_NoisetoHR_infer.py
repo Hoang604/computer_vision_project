@@ -1,4 +1,4 @@
-from src.trainers.diffusion_LRtoHR_trainer import DiffusionTrainer, ResidualGenerator
+from src.trainers.diffusion_NoisetoHR_trainer import DiffusionTrainer, ImageGenerator
 from src.data_handling.dataset import ImageDatasetRRDB
 import matplotlib.pyplot as plt
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
@@ -36,34 +36,30 @@ def plot_result(imgs):
     print(f"Comparison plot saved to {save_path}")
     plt.close(fig)
 
-def create_denoising_video(base_image_chw_tensor, intermediate_residuals_chw_list, output_filename="denoising_process.mp4", fps=10):
+def create_denoising_video(intermediate_hr_images_chw_list, output_filename="denoising_process.mp4", fps=10):
     """
     Creates a video of the denoising process.
 
     Args:
-        base_image_chw_tensor (torch.Tensor): The base upscaled image (e.g., from RRDBNet)
-                                             as a CHW tensor, range [-1, 1], on CUDA.
-        intermediate_residuals_chw_list (list[torch.Tensor]): A list of CHW tensors,
-                                                              each representing the predicted residual
-                                                              at an intermediate denoising step.
-                                                              Tensors are on CUDA, range approx [-1, 1].
+        intermediate_hr_images_chw_list (list[torch.Tensor]): A list of CHW tensors,
+                                                               each representing the predicted high-resolution
+                                                               image at an intermediate denoising step.
+                                                               Tensors are on CUDA, range approx [-1, 1].
         output_filename (str): Name of the output video file.
         fps (int): Frames per second for the video.
     """
-    if not intermediate_residuals_chw_list:
-        print("No intermediate residuals to create a video.")
+    if not intermediate_hr_images_chw_list:
+        print("No intermediate HR images to create a video.")
         return
-    c, h, w = base_image_chw_tensor.shape
+    c, h, w = intermediate_hr_images_chw_list[0].shape
     output_dir = "inference_outputs"
     os.makedirs(output_dir, exist_ok=True)
     video_path = os.path.join(output_dir, output_filename)
     fourcc = cv2.VideoWriter_fourcc(*'H264')
     video_writer = cv2.VideoWriter(video_path, fourcc, float(fps), (w, h))
-    print(f"Creating video with {len(intermediate_residuals_chw_list)} frames, saving to {video_path}...")
-    for i, residual_tensor in enumerate(tqdm(intermediate_residuals_chw_list, desc="Generating video frames")):
-        residual_tensor = residual_tensor.to(base_image_chw_tensor.device)
-        current_image_tensor = base_image_chw_tensor + residual_tensor
-        current_image_tensor = torch.clamp(current_image_tensor, -1.0, 1.0)
+    print(f"Creating video with {len(intermediate_hr_images_chw_list)} frames, saving to {video_path}...")
+    for i, hr_image_tensor in enumerate(tqdm(intermediate_hr_images_chw_list, desc="Generating video frames")):
+        current_image_tensor = torch.clamp(hr_image_tensor, -1.0, 1.0)
         current_image_normalized = (current_image_tensor + 1.0) / 2.0
         frame_hwc = current_image_normalized.permute(1, 2, 0)
         frame_np = (frame_hwc.cpu().numpy() * 255).astype(np.uint8)
@@ -103,7 +99,7 @@ def main():
     unet = DiffusionTrainer.load_diffusion_unet(unet_path, verbose=True, device=device)
     unet.eval()
 
-    generator = ResidualGenerator(img_size=img_size, predict_mode='noise', device=device)
+    generator = ImageGenerator(img_size=img_size, predict_mode='noise', device=device)
 
     item_idx = np.random.randint(0, len(dataset))
     print(f"\nProcessing sample dataset index: {item_idx}")
@@ -114,7 +110,7 @@ def main():
     with torch.no_grad():
         up_lr_img_cuda, features_cuda = context_extractor(lr_img_batch_cuda, get_fea=True)
 
-    final_generated_image_cuda_list  = generator.generate_residuals(
+    intermediate_hr_images_list = generator.generate_images(
         unet,
         features=features_cuda,
         num_images=1,
@@ -122,27 +118,26 @@ def main():
         return_intermediate_steps=True
     )
 
-    final_predicted_residual_cuda = final_generated_image_cuda_list[-1]
+    final_predicted_hr_cuda = intermediate_hr_images_list[-1]
 
-    base_for_video_cuda_chw = up_lr_img_cuda.squeeze(0)
-    hr_for_video_chw_list = [res.squeeze(0) for res in final_generated_image_cuda_list]
+    hr_for_video_chw_list = [img.squeeze(0) for img in intermediate_hr_images_list]
     video_filename = f"denoising_process_item_{item_idx}.mp4"
     create_denoising_video(
-        base_image_chw_tensor=base_for_video_cuda_chw,
-        intermediate_residuals_chw_list=hr_for_video_chw_list,
+        intermediate_hr_images_chw_list=hr_for_video_chw_list,
         output_filename=video_filename,
         fps=10
     )
 
+    # Prepare images for plotting
     lr_plot = (lr_img_tensor_chw.permute(1, 2, 0).cpu().numpy() + 1) / 2
     up_lr_plot = (up_lr_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    final_residual_plot = (final_predicted_residual_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+    final_hr_plot = (final_predicted_hr_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
     hr_original_plot = (hr_original_tensor_chw.permute(1, 2, 0).cpu().numpy() + 1) / 2
 
     imgs_for_plot = [
         np.clip(lr_plot,0,1),
         np.clip(up_lr_plot,0,1),
-        np.clip(final_residual_plot,0,1),
+        np.clip(final_hr_plot,0,1),
         np.clip(hr_original_plot,0,1)
     ]
     plot_result(imgs_for_plot)

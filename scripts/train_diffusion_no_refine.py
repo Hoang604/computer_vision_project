@@ -4,7 +4,7 @@ from src.data_handling.dataset import ImageDatasetRRDB
 import os
 import argparse
 from src.diffusion_modules.unet import Unet 
-from src.trainers.diffusion_LRtoHR_trainer import DiffusionTrainer
+from src.trainers.diffusion_NoisetoHR_trainer import DiffusionTrainer
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer 
 
 def train_diffusion(args):
@@ -189,7 +189,7 @@ def train_diffusion(args):
             checkpoint_dir_param=args.continue_checkpoint_dir,
             log_dir_base=args.base_log_dir,
             checkpoint_dir_base=args.base_checkpoint_dir,
-            context_selection_mode=args.context
+            # context_selection_mode=args.context # Not used in this script, but can be passed if needed
         )
     except Exception as train_error:
         print(f"\nERROR occurred during training: {train_error}")

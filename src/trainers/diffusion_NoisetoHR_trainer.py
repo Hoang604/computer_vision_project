@@ -424,20 +424,20 @@ class DiffusionTrainer:
                 img_size_sample = dataset_loader.dataset.img_size
                 # Note: img_channels is usually fixed (e.g., 3 for RGB residuals)
             
-            # Initialize ResidualGenerator
-            generator = ResidualGenerator(
+            # Initialize ImageGenerator
+            generator = ImageGenerator(
                 img_channels=img_channels_sample,
                 img_size=img_size_sample,
                 device=self.device,
                 num_train_timesteps=self.timesteps, # Timesteps U-Net was trained for
                 predict_mode=self.mode # 'v_prediction' or 'noise'
             )
-        except NameError: # If ResidualGenerator class is not found
-            print("Warning: ResidualGenerator class not found. Skipping sample generation.")
+        except NameError: # If ImageGenerator class is not found
+            print("Warning: ImageGenerator class not found. Skipping sample generation.")
             model.train() # Revert model to train mode
             return
         except Exception as e_gen_init:
-            print(f"Error initializing ResidualGenerator: {e_gen_init}. Skipping sample generation.")
+            print(f"Error initializing ImageGenerator: {e_gen_init}. Skipping sample generation.")
             model.train()
             return
 
@@ -481,7 +481,7 @@ class DiffusionTrainer:
 
         # Generate residuals for the samples
         with torch.no_grad():
-            generated_residuals_batch = generator.generate_residuals(
+            generated_hr_batch = generator.generate_images(
                 model=model,
                 features=sample_condition_features,
                 num_images=low_res_b.shape[0],
@@ -489,33 +489,25 @@ class DiffusionTrainer:
             )
 
         # Reconstruct images and prepare for logging
-        for i in range(generated_residuals_batch.shape[0]):
+        for i in range(generated_hr_batch.shape[0]):
             lr_img_display = (low_res_b[i].cpu().numpy() + 1.0) / 2.0
             hr_rrdb_display = (up_scale_b[i].cpu().numpy() + 1.0) / 2.0 # This is HR_RRDB
             hr_orig_display = (original_b[i].cpu().numpy() + 1.0) / 2.0
-            
-            predicted_residual_display = (generated_residuals_batch[i].cpu().numpy() + 1.0) / 2.0
-            final_hr_constructed = torch.clamp(up_scale_b[i] + generated_residuals_batch[i], -1.0, 1.0)
-            final_hr_constructed_display = (final_hr_constructed.cpu().numpy() + 1.0) / 2.0
-            
-            true_residual_display = (residual_b_gt[i].cpu().numpy() + 1.0) / 2.0 # Residual_b_gt is [-2,2]
 
+            predicted_hr_display = (generated_hr_batch[i].cpu().numpy() + 1.0) / 2.0
+            
             sample_images_data.append({
                 "low_res": np.clip(lr_img_display, 0, 1),
                 "hr_rrdb": np.clip(hr_rrdb_display, 0, 1),
-                "generated_residual": np.clip(predicted_residual_display, 0, 1),
-                "final_hr_refined": np.clip(final_hr_constructed_display, 0, 1),
-                "original_hr_gt": np.clip(hr_orig_display, 0, 1),
-                "true_residual_gt": np.clip(true_residual_display, 0, 1)
+                "predicted_hr": np.clip(predicted_hr_display, 0, 1), 
+                "original_hr_gt": np.clip(hr_orig_display, 0, 1)
             })
 
         for i, imgs_dict in enumerate(sample_images_data):
             writer.add_image(f'Sample_{i}/01_LowRes_Input', imgs_dict["low_res"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/02_HR_RRDB_Base', imgs_dict["hr_rrdb"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/03_Predicted_Residual_Diffusion', imgs_dict["generated_residual"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/04_Final_HR_Refined', imgs_dict["final_hr_refined"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/05_Original_HR_GroundTruth', imgs_dict["original_hr_gt"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/06_True_Residual_GT_(HR_orig-HR_rrdb)', imgs_dict["true_residual_gt"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/02_HR_RRDB_Baseline', imgs_dict["hr_rrdb"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/03_Predicted_HR_Diffusion', imgs_dict["predicted_hr"], epoch + 1, dataformats='CHW')
+            writer.add_image(f'Sample_{i}/04_Original_HR_GroundTruth', imgs_dict["original_hr_gt"], epoch + 1, dataformats='CHW')
 
         print(f"Logged {len(sample_images_data)} sample images to TensorBoard.")
         model.train() # Revert model to train mode
@@ -845,7 +837,7 @@ class DiffusionTrainer:
         return start_epoch, loaded_best_loss
 
 
-class ResidualGenerator:
+class ImageGenerator:
     """
     A class for generating image residuals using a pre-trained diffusion model and a scheduler.
     This class can now accept pre-extracted features for conditioning.
@@ -906,12 +898,12 @@ class ResidualGenerator:
             set_alpha_to_one=False,
             steps_offset=1,
         )
-        print(f"ResidualGenerator initialized with {type(self.scheduler).__name__}, "
+        print(f"ImageGenerator initialized with {type(self.scheduler).__name__}, "
               f"configured for model prediction_type='{self.predict_mode}' (scheduler prediction_type='{scheduler_prediction_type}'). "
               f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.")
 
     @torch.no_grad()
-    def generate_residuals(self, model, features, num_images=1, num_inference_steps=50, return_intermediate_steps=False):
+    def generate_images(self, model, features, num_images=1, num_inference_steps=50, return_intermediate_steps=False):
         """
         Generates image residuals using the provided diffusion model and pre-extracted features.
         Optionally returns all intermediate latents during the denoising process.
