@@ -203,13 +203,13 @@ class DiffusionTrainer:
         current_accumulation_idx = 0 # Counter for current accumulation cycle
         return global_step_optimizer, batch_step_counter, current_accumulation_idx
 
-    def _get_training_target(self, noise_added, original_residual_batch, t):
+    def _get_training_target(self, noise_added, original_hr_image_batch, t):
         """Determine the model target based on self.mode."""
         if self.mode == "v_prediction":
             # For v-prediction, target is sqrt(alphas_cumprod_t) * noise - sqrt(1 - alphas_cumprod_t) * x_0
-            sqrt_alphas_cumprod_t = self._extract(self.sqrt_alphas_cumprod, t, original_residual_batch.shape)
-            sqrt_one_minus_alphas_cumprod_t = self._extract(self.sqrt_one_minus_alphas_cumprod, t, original_residual_batch.shape)
-            target = sqrt_alphas_cumprod_t * noise_added - sqrt_one_minus_alphas_cumprod_t * original_residual_batch
+            sqrt_alphas_cumprod_t = self._extract(self.sqrt_alphas_cumprod, t, original_hr_image_batch.shape)
+            sqrt_one_minus_alphas_cumprod_t = self._extract(self.sqrt_one_minus_alphas_cumprod, t, original_hr_image_batch.shape)
+            target = sqrt_alphas_cumprod_t * noise_added - sqrt_one_minus_alphas_cumprod_t * original_hr_image_batch
         elif self.mode == "noise":
             # For noise prediction (epsilon-prediction), target is the noise itself
             target = noise_added
@@ -226,7 +226,7 @@ class DiffusionTrainer:
         Args:
             model (torch.nn.Module): The diffusion model.
             context_extractor (torch.nn.Module, optional): Model for on-the-fly feature extraction.
-            batch_data (tuple): A tuple containing the batch data: (low_res, upscaled_rrdb, original_hr, original_residual).
+            batch_data (tuple): A tuple containing the batch data: (low_res, upscaled_rrdb, original_hr, original_hr_image).
             optimizer (torch.optim.Optimizer): The optimizer for the model.
             accumulation_steps (int): Number of steps for gradient accumulation.
             current_accumulation_idx (int): Current index in the accumulation cycle.
@@ -239,7 +239,7 @@ class DiffusionTrainer:
                 - global_step_optimizer (int): Updated global step count for the optimizer.
                 - updated_optimizer_this_step (bool): Flag indicating if the optimizer was updated this step.
         """
-        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual)
+        # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_hr_image)
         # lr_features_batch_of_lists is NO LONGER in batch_data
         low_res_image_batch, _, original_hr_image_batch, _ = batch_data
 
@@ -260,7 +260,7 @@ class DiffusionTrainer:
         # --- Diffusion Process and Model Prediction ---
         with torch.set_grad_enabled(is_training): # Enable gradients only if training
             t = torch.randint(0, self.timesteps, (actual_batch_size,), device=self.device, dtype=torch.long)
-            original_hr_image_batch_t, noise_added = self.q_sample(original_hr_image_batch, t) # Noise the target residual
+            original_hr_image_batch_t, noise_added = self.q_sample(original_hr_image_batch, t) # Noise the target hr_image 
             target_for_unet = self._get_training_target(noise_added, original_hr_image_batch, t) # Get U-Net's target
 
             predicted_output = model(original_hr_image_batch_t, t, condition=condition_features_list)
@@ -422,7 +422,7 @@ class DiffusionTrainer:
             img_size_sample = 160   # Default
             if hasattr(dataset_loader, 'dataset') and hasattr(dataset_loader.dataset, 'img_size'):
                 img_size_sample = dataset_loader.dataset.img_size
-                # Note: img_channels is usually fixed (e.g., 3 for RGB residuals)
+                # Note: img_channels is usually fixed (e.g., 3 for RGB hr_images)
             
             # Initialize ImageGenerator
             generator = ImageGenerator(
@@ -452,7 +452,7 @@ class DiffusionTrainer:
         try:
             # Get one batch from the dataset loader
             sample_batch_data = next(iter(dataset_loader))
-            low_res_b, up_scale_b, original_b, residual_b_cpu = sample_batch_data
+            low_res_b, up_scale_b, original_b, _ = sample_batch_data
         except StopIteration:
             print("Warning: Not enough data in dataset_loader to generate samples.")
             model.train()
@@ -466,7 +466,6 @@ class DiffusionTrainer:
         low_res_b = low_res_b[:num_samples_to_generate].to(self.device)
         up_scale_b = up_scale_b[:num_samples_to_generate].to(self.device)
         original_b = original_b[:num_samples_to_generate].to(self.device) # For display
-        residual_b_gt = residual_b_cpu[:num_samples_to_generate].to(self.device) # Ground truth residual
 
         # --- On-the-fly Feature Extraction for samples ---
         sample_condition_features = None
@@ -479,7 +478,7 @@ class DiffusionTrainer:
             print("Warning: context_extractor is None during sample generation. Passing None condition to U-Net.")
 
 
-        # Generate residuals for the samples
+        # Generate hr_images for the samples
         with torch.no_grad():
             generated_hr_batch = generator.generate_images(
                 model=model,
@@ -675,6 +674,7 @@ class DiffusionTrainer:
             print("Model loaded successfully with strict key checking.")
         
         return unet
+    
     @staticmethod
     def load_model_weights(model, model_path, verbose=False, device='cuda'):
         """
@@ -839,7 +839,7 @@ class DiffusionTrainer:
 
 class ImageGenerator:
     """
-    A class for generating image residuals using a pre-trained diffusion model and a scheduler.
+    A class for generating image hr_images using a pre-trained diffusion model and a scheduler.
     This class can now accept pre-extracted features for conditioning.
 
     Attributes:
@@ -905,7 +905,7 @@ class ImageGenerator:
     @torch.no_grad()
     def generate_images(self, model, features, num_images=1, num_inference_steps=50, return_intermediate_steps=False):
         """
-        Generates image residuals using the provided diffusion model and pre-extracted features.
+        Generates image hr_images using the provided diffusion model and pre-extracted features.
         Optionally returns all intermediate latents during the denoising process.
 
         Args:
@@ -914,7 +914,7 @@ class ImageGenerator:
                                                    to condition the U-Net. Each tensor in the list
                                                    should be batched [num_images, C_feat, H_feat, W_feat].
                                                    Can be None if the model is unconditional.
-            num_images (int, optional): Number of images/residuals to generate.
+            num_images (int, optional): Number of images/hr_images to generate.
                                         Must match the batch size of `features` if provided. Defaults to 1.
             num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
             return_intermediate_steps (bool, optional): If True, returns a list of all intermediate
@@ -922,16 +922,16 @@ class ImageGenerator:
 
         Returns:
             torch.Tensor or list[torch.Tensor]:
-                - If return_intermediate_steps is False: A batch of generated residuals.
+                - If return_intermediate_steps is False: A batch of generated hr_images.
                   Shape: [num_images, img_channels, img_size, img_size].
                 - If return_intermediate_steps is True: A list of torch.Tensors, where each tensor
                   represents the image latents at an intermediate denoising step. The last
-                  element in the list is the final generated residual.
+                  element in the list is the final generated hr_image.
         """
         model.eval()
         model.to(self.device)
 
-        print(f"Generating {num_images} residuals using {num_inference_steps} steps "
+        print(f"Generating {num_images} hr_images using {num_inference_steps} steps "
               f"with {type(self.scheduler).__name__} (model expected to predict: '{self.predict_mode}') "
               f"on device {self.device}...")
 
@@ -947,7 +947,7 @@ class ImageGenerator:
         if return_intermediate_steps:
             intermediate_latents_list.append(image_latents.clone())
 
-        for t_step in tqdm(self.scheduler.timesteps, desc="Generating residuals"):
+        for t_step in tqdm(self.scheduler.timesteps, desc="Generating hr_images"):
             model_input = image_latents
             t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device)
             model_output = model(model_input, t_for_model, condition=features)
@@ -957,18 +957,18 @@ class ImageGenerator:
             if return_intermediate_steps:
                 intermediate_latents_list.append(image_latents.clone())
 
-        generated_residuals = image_latents
-        print("Residual generation complete.")
+        generated_hr_images = image_latents
+        print("Hr image generation complete.")
 
         if return_intermediate_steps:
             return intermediate_latents_list
         else:
-            return generated_residuals
+            return generated_hr_images
         
     @torch.no_grad()
-    def generate_multiple_residuals(self, model, list_of_features, num_inference_steps=50):
+    def generate_hr_images_batch(self, model, list_of_features, num_inference_steps=50):
         """
-        Generates multiple image residuals in parallel from a list of feature sets.
+        Generates a batch of high-resolution images in parallel from a list of feature sets.
 
         This method concatenates each corresponding feature tensor from the list into a single
         batch, allowing for efficient parallel generation on a GPU.
@@ -981,7 +981,7 @@ class ImageGenerator:
             num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
 
         Returns:
-            torch.Tensor: A single tensor containing a batch of all generated residuals.
+            torch.Tensor: A single tensor containing a batch of all generated hr_images.
                           Shape: [num_images, img_channels, img_size, img_size].
         """
         model.eval()
@@ -991,7 +991,7 @@ class ImageGenerator:
              raise ValueError("list_of_features must be a list of lists of tensors.")
 
         num_images = len(list_of_features)
-        print(f"Starting parallel generation for {num_images} residuals...")
+        print(f"Starting parallel generation for {num_images} hr_images...")
 
         # --- Batching the features ---
         # This part assumes that the structure of features is consistent across all items in the list.
@@ -1016,7 +1016,7 @@ class ImageGenerator:
         image_latents = image_latents * self.scheduler.init_noise_sigma
 
         # Denoising loop for the whole batch
-        for t_step in tqdm(self.scheduler.timesteps, desc=f"Generating {num_images} residuals"):
+        for t_step in tqdm(self.scheduler.timesteps, desc=f"Generating {num_images} hr_images"):
             model_input = image_latents
             t_for_model = t_step.unsqueeze(0).expand(num_images).to(self.device)
 
@@ -1026,6 +1026,6 @@ class ImageGenerator:
             scheduler_output = self.scheduler.step(model_output, t_step, image_latents)
             image_latents = scheduler_output.prev_sample
 
-        generated_residuals = image_latents
-        print("Parallel residual generation complete.")
-        return generated_residuals
+        generated_hr_images = image_latents
+        print("Parallel hr_image generation complete.")
+        return generated_hr_images

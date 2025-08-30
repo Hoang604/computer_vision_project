@@ -315,3 +315,109 @@ class ImageDatasetRRDB(Dataset):
 
         print(f"Warning: Returning dummy image data for index {idx} due to previous error.")
         return _dummy_low_res, _dummy_upscaled_rrdb, _dummy_original_hr, _dummy_residual
+    
+class FlowDataset(Dataset):
+    """
+    Dataset for loading data (lr, x0, x1) that has been pre-prepared for
+    Rectified Flow model training.
+
+    It reads tensors from their respective subdirectories ('lr', 'x0', 'x1')
+    and supports optional horizontal flipping for data augmentation.
+
+    Attributes:
+        root_dir (str): The root directory containing the prepared data.
+        apply_hflip (bool): Flag to enable/disable horizontal flip augmentation.
+        tensor_files_basenames (list): A sorted list of base filenames for the tensors.
+        num_original_samples (int): The number of unique samples before augmentation.
+    """
+    def __init__(self, prepared_data_folder: str, apply_hflip: bool = False):
+        """
+        Initializes the FlowDataset.
+
+        Args:
+            prepared_data_folder (str): Path to the directory containing the 'lr', 'x0',
+                                        and 'x1' subdirectories.
+            apply_hflip (bool, optional): If True, enables horizontal flip
+                                          augmentation, effectively doubling the
+                                          dataset size. Defaults to False.
+        """
+        self.root_dir = prepared_data_folder
+        self.apply_hflip = apply_hflip
+        
+        self.path_lr = os.path.join(self.root_dir, 'lr')
+        self.path_x0 = os.path.join(self.root_dir, 'x0')
+        self.path_x1 = os.path.join(self.root_dir, 'x1')
+
+        if not all(os.path.isdir(p) for p in [self.path_lr, self.path_x0, self.path_x1]):
+            raise FileNotFoundError(
+                f"One or more required subdirectories ('lr', 'x0', 'x1') not found in '{self.root_dir}'"
+            )
+
+        # Assume filenames are consistent across subdirectories
+        self.tensor_files_basenames = sorted([f for f in os.listdir(self.path_x0) if f.endswith('.pt')])
+        if not self.tensor_files_basenames:
+            raise ValueError(f"No .pt tensor files found in {self.path_x0}. Ensure data preparation was successful.")
+        
+        self.num_original_samples = len(self.tensor_files_basenames)
+
+        print(f"FlowDataset: Found {self.num_original_samples} tensor sets in {self.root_dir}.")
+        if self.apply_hflip:
+            print("Horizontal flipping augmentation is ENABLED.")
+        else:
+            print("Horizontal flipping augmentation is DISABLED.")
+
+
+    def __len__(self):
+        """
+        Returns the total size of the dataset.
+        
+        This is doubled if horizontal flip augmentation is enabled.
+        """
+        return self.num_original_samples * 2 if self.apply_hflip else self.num_original_samples
+
+    def __getitem__(self, idx):
+        """
+        Retrieves a data triplet (lr, x0, x1) at the given index.
+
+        If augmentation is enabled, indices from num_original_samples onwards
+        will correspond to horizontally flipped versions of the original samples.
+
+        Args:
+            idx (int): The index of the item to retrieve.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                - low_resolution_image (C, H_low, W_low)
+                - x0_tensor (e.g., noise) (C, H_orig, W_orig)
+                - x1_tensor (e.g., target image) (C, H_orig, W_orig)
+        """
+        should_flip_this_sample = False
+        if self.apply_hflip:
+            # If the index is in the second half of the dataset, we should flip.
+            should_flip_this_sample = idx >= self.num_original_samples
+            # Get the index of the original file on disk.
+            actual_idx = idx % self.num_original_samples
+        else:
+            actual_idx = idx
+
+        basename = self.tensor_files_basenames[actual_idx]
+        
+        try:
+            # Load tensors from their respective files
+            lr = torch.load(os.path.join(self.path_lr, basename))
+            x0 = torch.load(os.path.join(self.path_x0, basename))
+            x1 = torch.load(os.path.join(self.path_x1, basename))
+
+            # Apply horizontal flip if this sample requires it
+            if should_flip_this_sample:
+                lr = TF.hflip(lr)
+                x0 = TF.hflip(x0)
+                x1 = TF.hflip(x1)
+
+            # The trainer expects data in the order (low_res_image, x0, x1)
+            return lr, x0, x1
+            
+        except Exception as e:
+            print(f"Error loading or processing tensor for basename '{basename}' at index {idx}: {e}. Returning dummy tensors.")
+            # Return dummy tensors on error to prevent training crash
+            return torch.zeros(1), torch.zeros(1), torch.zeros(1)
