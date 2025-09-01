@@ -1,28 +1,38 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
 from src.data_handling.dataset import ImageDatasetRRDB
 import matplotlib.pyplot as plt
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 import numpy as np
-from src.diffusion_modules.unet import Unet
 import torch
-import os
 import cv2
 from tqdm import tqdm
+from src.utils.bicubic import upscale_image
 
 def plot_result(imgs):
     """
     Plots the low-resolution, upscaled, diffusion residual, constructed, and high-resolution images.
     """
     lr, up, diff_res, con, hr_img = imgs
+
+    bicubic_upscaled = upscale_image(lr, scale_factor=4)
+
     fig, axs = plt.subplots(1, 5, figsize=(20, 4))
     axs[0].imshow(lr, interpolation='nearest')
     axs[0].set_title(f'LR Image\n({lr.shape[0]}x{lr.shape[1]})')
-    axs[1].imshow(up)
-    axs[1].set_title(f'RRDB Upscaled\n({up.shape[0]}x{up.shape[1]})')
-    axs[2].imshow(diff_res)
-    axs[2].set_title(f'Predicted Residual\n({diff_res.shape[0]}x{diff_res.shape[1]})')
+    
+    axs[1].imshow(bicubic_upscaled)
+    axs[1].set_title(f'Bicubic Upscaled\n({diff_res.shape[0]}x{diff_res.shape[1]})')
+
+    axs[2].imshow(up)
+    axs[2].set_title(f'RRDB Upscaled\n({up.shape[0]}x{up.shape[1]})')
+
     axs[3].imshow(con)
-    axs[3].set_title(f'Refined Image\n({con.shape[0]}x{con.shape[1]})')
+    axs[3].set_title(f'RRDB + Diffusion\n({con.shape[0]}x{con.shape[1]})')
+
     axs[4].imshow(hr_img)
     axs[4].set_title(f'Ground Truth HR\n({hr_img.shape[0]}x{hr_img.shape[1]})')
     for ax in axs:
@@ -104,51 +114,52 @@ def main():
     unet.eval()
 
     generator = ResidualGenerator(img_size=img_size, predict_mode='noise', device=device)
+    while True:
+        item_idx = np.random.randint(0, len(dataset))
+        print(f"\nProcessing sample dataset index: {item_idx}")
 
-    item_idx = np.random.randint(0, len(dataset))
-    print(f"\nProcessing sample dataset index: {item_idx}")
+        lr_img_tensor_chw, _, hr_original_tensor_chw, _ = dataset[item_idx]
+        lr_img_batch_cuda = lr_img_tensor_chw.unsqueeze(0).to(device)
 
-    lr_img_tensor_chw, _, hr_original_tensor_chw, _ = dataset[item_idx]
-    lr_img_batch_cuda = lr_img_tensor_chw.unsqueeze(0).to(device)
+        with torch.no_grad():
+            up_lr_img_cuda, features_cuda = context_extractor(lr_img_batch_cuda, get_fea=True)
 
-    with torch.no_grad():
-        up_lr_img_cuda, features_cuda = context_extractor(lr_img_batch_cuda, get_fea=True)
+        intermediate_residuals_list = generator.generate_residuals(
+            unet,
+            features=features_cuda,
+            num_images=1,
+            num_inference_steps=20,
+            return_intermediate_steps=False
+        )
 
-    intermediate_residuals_list = generator.generate_residuals(
-        unet,
-        features=features_cuda,
-        num_images=1,
-        num_inference_steps=50,
-        return_intermediate_steps=True
-    )
+        final_predicted_residual_cuda = intermediate_residuals_list[-1]
 
-    final_predicted_residual_cuda = intermediate_residuals_list[-1]
+        # base_for_video_cuda_chw = up_lr_img_cuda.squeeze(0)
+        # residuals_for_video_chw_list = [res.squeeze(0) for res in intermediate_residuals_list]
+        # video_filename = f"denoising_process_item_{item_idx}.mp4"
+        # create_denoising_video(
+        #     base_image_chw_tensor=base_for_video_cuda_chw,
+        #     intermediate_residuals_chw_list=residuals_for_video_chw_list,
+        #     output_filename=video_filename,
+        #     fps=10
+        # )
 
-    base_for_video_cuda_chw = up_lr_img_cuda.squeeze(0)
-    residuals_for_video_chw_list = [res.squeeze(0) for res in intermediate_residuals_list]
-    video_filename = f"denoising_process_item_{item_idx}.mp4"
-    create_denoising_video(
-        base_image_chw_tensor=base_for_video_cuda_chw,
-        intermediate_residuals_chw_list=residuals_for_video_chw_list,
-        output_filename=video_filename,
-        fps=10
-    )
+        lr_plot = (lr_img_tensor_chw.permute(1, 2, 0).cpu().numpy() + 1) / 2
+        up_lr_plot = (up_lr_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+        final_residual_plot = (final_predicted_residual_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+        constructed_img_cuda = torch.clamp(up_lr_img_cuda + final_predicted_residual_cuda, -1.0, 1.0)
+        constructed_plot = (constructed_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
+        hr_original_plot = (hr_original_tensor_chw.permute(1, 2, 0).cpu().numpy() + 1) / 2
 
-    lr_plot = (lr_img_tensor_chw.permute(1, 2, 0).cpu().numpy() + 1) / 2
-    up_lr_plot = (up_lr_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    final_residual_plot = (final_predicted_residual_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    constructed_img_cuda = torch.clamp(up_lr_img_cuda + final_predicted_residual_cuda, -1.0, 1.0)
-    constructed_plot = (constructed_img_cuda.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() + 1) / 2
-    hr_original_plot = (hr_original_tensor_chw.permute(1, 2, 0).cpu().numpy() + 1) / 2
-
-    imgs_for_plot = [
-        np.clip(lr_plot,0,1),
-        np.clip(up_lr_plot,0,1),
-        np.clip(final_residual_plot,0,1),
-        np.clip(constructed_plot,0,1),
-        np.clip(hr_original_plot,0,1)
-    ]
-    plot_result(imgs_for_plot)
+        imgs_for_plot = [
+            np.clip(lr_plot,0,1),
+            np.clip(up_lr_plot,0,1),
+            np.clip(final_residual_plot,0,1),
+            np.clip(constructed_plot,0,1),
+            np.clip(hr_original_plot,0,1)
+        ]
+        plot_result(imgs_for_plot)
+        input()
 
 if __name__ == '__main__':
     main()

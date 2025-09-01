@@ -1,0 +1,48 @@
+
+# Dataset Arguments
+flow_prepared_data_folder: 
+val_flow_prepared_data_folder: 
+img_size: 160
+img_channels: 3
+downscale_factor: 4
+apply_hflip: True
+apply_val_hflip: False
+
+# Training Arguments
+mode: 'rectified_flow'
+device: 'cuda:0'
+epochs: 100
+batch_size: 32
+val_batch_size: 32
+accumulation_steps: 1
+learning_rate: 0.0001
+weight_decay: 0.0001
+num_workers: 4
+val_every_n_epochs: 1
+
+# Scheduler Arguments
+scheduler_type: 'cosineannealinglr'
+lr_decay_epochs: 50
+lr_gamma: 0.5
+cosine_t_max_epochs: 
+eta_min_lr: 0.000001
+
+# UNet Arguments
+unet_base_dim: 64
+unet_dim_mults: [1, 2, 4, 8]
+use_attention: True
+
+# RRDBNet (Context Extractor) Arguments
+rrdb_weights_path_context_extractor: 
+rrdb_num_block_context: 17
+rrdb_num_feat_context: 64
+rrdb_gc_context: 32
+
+# Logging/Saving & Reflow Arguments
+weights_path_unet_resume: 
+pretrained_model_path_for_reflow: 
+base_log_dir: 'logs/rectified_flow'
+base_checkpoint_dir: 'checkpoints/rectified_flow'
+continue_log_dir: 
+continue_checkpoint_dir: 
+verbose_load: False

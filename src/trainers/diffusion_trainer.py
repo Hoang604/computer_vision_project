@@ -863,7 +863,7 @@ class ResidualGenerator:
                  img_size=256,
                  device='cuda',
                  num_train_timesteps=1000,
-                 predict_mode='v_prediction'):
+                 predict_mode='noise'):
         self.img_channels = img_channels
         self.img_size = img_size
         self.device = device

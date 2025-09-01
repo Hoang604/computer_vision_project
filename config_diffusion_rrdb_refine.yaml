@@ -1,0 +1,51 @@
+
+# Dataset args
+preprocessed_data_folder: 
+val_preprocessed_data_folder: 
+img_size: 160
+img_channels: 3
+downscale_factor: 4
+apply_hflip: True
+apply_val_hflip: False
+
+# Training args
+device: 'cuda:1'
+epochs: 60
+batch_size: 64
+val_batch_size: 64
+accumulation_steps: 4
+learning_rate: 0.0001
+weight_decay: 0.01
+num_workers: 4
+val_every_n_epochs: 1
+
+# Scheduler args
+scheduler_type: 'cosineannealinglr'
+lr_decay_epochs: 30
+lr_gamma: 0.1
+cosine_t_max_epochs: 
+eta_min_lr: 0.000001
+
+# Diffusion args
+context: 'LR'
+timesteps: 1000
+diffusion_mode: 'noise'
+
+# UNet args
+unet_base_dim: 64
+unet_dim_mults: [1, 2, 4, 8]
+use_attention: True
+
+# RRDBNet (Context Extractor) args
+rrdb_weights_path_context_extractor: 
+rrdb_num_block_context: 17
+rrdb_num_feat_context: 64
+rrdb_gc_context: 32
+
+# Logging/Saving args
+weights_path_unet: 
+base_log_dir: 'logs/diffusion'
+base_checkpoint_dir: 'checkpoints/diffusion'
+continue_log_dir: 
+continue_checkpoint_dir: 
+verbose_load: False
