@@ -5,7 +5,9 @@ from PIL import Image
 import os
 import torchvision.transforms.functional as TF
 from src.utils.bicubic import upscale_image
-
+import glob
+import traceback
+from tqdm import tqdm
 
 class ImageDataset(Dataset):
     def __init__(self, folder_path: str, img_size: int, downscale_factor: int, upscale_function=upscale_image):
@@ -183,241 +185,149 @@ class ImageDataset(Dataset):
 
             # raise e # Option: re-raise the exception to halt on error
             return _dummy_low_res, _dummy_upscaled, _dummy_original, _dummy_residual
-        
 
 class ImageDatasetRRDB(Dataset):
-    def __init__(self,
-                 preprocessed_folder_path: str,
-                 img_size: int,
-                 downscale_factor: int,
-                 apply_hflip: bool = False):
-        """
-        Initializes the dataset to load preprocessed tensors.
-        DOES NOT load pre-extracted LR features. Features will be extracted on-the-fly.
-        All output image tensors (low_res, upscaled_rrdb, original_hr)
-        will be in the range [-1, 1].
-        The residual_image will be in the range [-2, 2].
-
-        Args:
-            preprocessed_folder_path (str): Path to the folder containing preprocessed tensors
-                                          (subfolders: 'hr_original', 'lr', 'hr_rrdb_upscaled').
-                                          The 'lr_features' subfolder is NO LONGER expected.
-            img_size (int): Target size for the 'original' HR image (height and width).
-            downscale_factor (int): Factor by which HR was downscaled to get LR.
-            apply_hflip (bool): Whether to apply horizontal flipping as data augmentation.
-        """
+    """
+    Dataset for 1-RF 'rectified' training, loading preprocessed RRDB tensors.
+    Implements a robust "Skip and Report" error handling policy.
+    """
+    def __init__(self, preprocessed_folder_path: str, apply_hflip: bool = False):
         self.preprocessed_folder_path = preprocessed_folder_path
         self.path_hr_original = os.path.join(preprocessed_folder_path, 'hr_original')
         self.path_lr = os.path.join(preprocessed_folder_path, 'lr')
         self.path_hr_rrdb_upscaled = os.path.join(preprocessed_folder_path, 'hr_rrdb_upscaled')
-        # self.path_lr_features = os.path.join(preprocessed_folder_path, 'lr_features') # REMOVED
 
-        # Ensure required subdirectories exist (excluding lr_features)
-        required_paths = [self.path_hr_original, self.path_lr, self.path_hr_rrdb_upscaled]
-        for p in required_paths:
+        # Ensure required directories exist
+        for p in [self.path_hr_original, self.path_lr, self.path_hr_rrdb_upscaled]:
             if not os.path.isdir(p):
-                raise FileNotFoundError(
-                    f"Required subdirectory '{os.path.basename(p)}' not found in {preprocessed_folder_path}. "
-                    "Please run the updated preprocessing script first (which does not create 'lr_features')."
-                )
+                raise FileNotFoundError(f"Required subdirectory not found: {p}")
 
-        # Base file discovery on one of the existing tensor types, e.g., 'lr'
-        self.tensor_files_basenames = sorted(
-            [f for f in os.listdir(self.path_lr) if f.lower().endswith('.pt')]
-        )
-
+        # Index files based on one tensor type (e.g., lr)
+        self.tensor_files_basenames = sorted([f for f in os.listdir(self.path_lr) if f.lower().endswith('.pt')])
         if not self.tensor_files_basenames:
-            raise ValueError(f"No .pt files found in {self.path_lr}. Ensure preprocessing was successful.")
+            raise ValueError(f"No .pt files found in {self.path_lr}. Please ensure preprocessing was successful.")
 
         self.num_original_samples = len(self.tensor_files_basenames)
-        self.img_size = img_size
-        self.downscale_factor = downscale_factor
         self.apply_hflip = apply_hflip
-
-        print(f"ImageDatasetRRDB (No Feature Loading): Found {self.num_original_samples} preprocessed tensor sets in {preprocessed_folder_path}.")
-        if self.apply_hflip:
-            print("Horizontal flipping augmentation is ENABLED.")
-        else:
-            print("Horizontal flipping augmentation is DISABLED.")
+        print(f"ImageDatasetRRDB: Found {self.num_original_samples} tensor sets. Augmentation(hflip): {'ENABLED' if apply_hflip else 'DISABLED'}.")
 
     def __len__(self):
         return self.num_original_samples * 2 if self.apply_hflip else self.num_original_samples
 
     def __getitem__(self, idx):
         """
-        Retrieves a tuple of image tensors:
-        (low_res_image, upscaled_image_rrdb, original_hr_image, residual_image)
-        Image tensors are in [-1, 1] (residual in [-2, 2]).
-        LR features are NOT loaded here.
-
-        Args:
-            idx (int): Index of the item to retrieve.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-                - low_res_image (C, H_low, W_low)
-                - upscaled_image_rrdb (C, H_orig, W_orig)
-                - original_hr_image (C, H_orig, W_orig)
-                - residual_image (C, H_orig, W_orig)
+        Retrieves image tensors. If an error occurs, it prints a warning and
+        returns None, allowing the DataLoader to skip the corrupted sample.
         """
-        should_flip_this_sample = False
-        if self.apply_hflip:
-            should_flip_this_sample = idx >= self.num_original_samples
-            actual_idx = idx % self.num_original_samples
-        else:
-            actual_idx = idx
+        should_flip = self.apply_hflip and (idx >= self.num_original_samples)
+        actual_idx = idx % self.num_original_samples
+        base_filename = self.tensor_files_basenames[actual_idx]
 
-        base_filename_pt = self.tensor_files_basenames[actual_idx] # e.g., "image_001.pt"
-
+        # MODIFICATION: Catch errors, report them, and return None instead of crashing
         try:
-            low_res_image = torch.load(os.path.join(self.path_lr, base_filename_pt)).clone()
-            original_hr_image = torch.load(os.path.join(self.path_hr_original, base_filename_pt)).clone()
-            upscaled_image_rrdb = torch.load(os.path.join(self.path_hr_rrdb_upscaled, base_filename_pt)).clone()
-            # REMOVED: lr_features_list loading
-            # lr_features_list = torch.load(os.path.join(self.path_lr_features, base_filename_pt))
+            low_res_path = os.path.join(self.path_lr, base_filename)
+            hr_path = os.path.join(self.path_hr_original, base_filename)
+            rrdb_path = os.path.join(self.path_hr_rrdb_upscaled, base_filename)
 
-            # --- Verification (optional but good for debugging) ---
-            if original_hr_image.shape[1] != self.img_size or original_hr_image.shape[2] != self.img_size:
-                print(f"Warning: Loaded original_hr_image for {base_filename_pt} has shape {original_hr_image.shape} "
-                      f"but expected H/W of {self.img_size}.")
+            low_res_image = torch.load(low_res_path)
+            original_hr_image = torch.load(hr_path)
+            upscaled_image_rrdb = torch.load(rrdb_path)
 
-            # Apply horizontal flip if needed
-            if should_flip_this_sample:
+            if should_flip:
                 low_res_image = TF.hflip(low_res_image)
                 original_hr_image = TF.hflip(original_hr_image)
                 upscaled_image_rrdb = TF.hflip(upscaled_image_rrdb)
-                # REMOVED: Flipping feature maps
-                # lr_features_list = [TF.hflip(feat) for feat in lr_features_list]
-
 
             residual_image = original_hr_image - upscaled_image_rrdb
-
-            # Return tuple without lr_features_list
             return low_res_image, upscaled_image_rrdb, original_hr_image, residual_image
-
-        except FileNotFoundError as fnf_err:
-            print(f"Error: Preprocessed file not found for {base_filename_pt} at index {idx}. {fnf_err}")
         except Exception as e:
-            print(f"Error loading or processing tensor for {base_filename_pt} at index {idx}: {e}")
-            import traceback
-            traceback.print_exc() # Print full traceback for debugging
+            print(f"\n--- WARNING: Skipping corrupted sample ---")
+            print(f"Error processing index {idx} (file: {base_filename}): {e}")
+            # traceback.print_exc() # Uncomment for detailed debugging
+            print(f"-----------------------------------------\n")
+            return None # Return None so the collate_fn can filter it out
 
-        # Fallback dummy tensor creation (if any error occurred)
-        dummy_c = 3
-        dummy_lr_h = max(1, self.img_size // self.downscale_factor if self.downscale_factor > 0 else self.img_size)
-        dummy_lr_w = max(1, self.img_size // self.downscale_factor if self.downscale_factor > 0 else self.img_size)
-
-        _dummy_low_res = torch.zeros((dummy_c, dummy_lr_h, dummy_lr_w))
-        _dummy_upscaled_rrdb = torch.zeros((dummy_c, self.img_size, self.img_size))
-        _dummy_original_hr = torch.zeros((dummy_c, self.img_size, self.img_size))
-        _dummy_residual = torch.zeros((dummy_c, self.img_size, self.img_size))
-        # REMOVED: _dummy_lr_features
-
-        print(f"Warning: Returning dummy image data for index {idx} due to previous error.")
-        return _dummy_low_res, _dummy_upscaled_rrdb, _dummy_original_hr, _dummy_residual
-    
 class FlowDataset(Dataset):
     """
-    Dataset for loading data (lr, x0, x1) that has been pre-prepared for
-    Rectified Flow model training.
-
-    It reads tensors from their respective subdirectories ('lr', 'x0', 'x1')
-    and supports optional horizontal flipping for data augmentation.
-
-    Attributes:
-        root_dir (str): The root directory containing the prepared data.
-        apply_hflip (bool): Flag to enable/disable horizontal flip augmentation.
-        tensor_files_basenames (list): A sorted list of base filenames for the tensors.
-        num_original_samples (int): The number of unique samples before augmentation.
+    Dataset for 2-RF 'reflow' training, optimized for reading from large chunk files.
+    Implements a robust "Skip and Report" error handling policy.
     """
     def __init__(self, prepared_data_folder: str, apply_hflip: bool = False):
-        """
-        Initializes the FlowDataset.
-
-        Args:
-            prepared_data_folder (str): Path to the directory containing the 'lr', 'x0',
-                                        and 'x1' subdirectories.
-            apply_hflip (bool, optional): If True, enables horizontal flip
-                                          augmentation, effectively doubling the
-                                          dataset size. Defaults to False.
-        """
         self.root_dir = prepared_data_folder
         self.apply_hflip = apply_hflip
-        
-        self.path_lr = os.path.join(self.root_dir, 'lr')
         self.path_x0 = os.path.join(self.root_dir, 'x0')
-        self.path_x1 = os.path.join(self.root_dir, 'x1')
 
-        if not all(os.path.isdir(p) for p in [self.path_lr, self.path_x0, self.path_x1]):
-            raise FileNotFoundError(
-                f"One or more required subdirectories ('lr', 'x0', 'x1') not found in '{self.root_dir}'"
-            )
+        # Find and index chunk files
+        self.x0_chunks = sorted(glob.glob(os.path.join(self.path_x0, "reflow_chunk_*_x0.pt")))
+        if not self.x0_chunks:
+            raise FileNotFoundError(f"No data chunks found in {self.path_x0}. Please run prepare_data_for_reflow.py first.")
 
-        # Assume filenames are consistent across subdirectories
-        self.tensor_files_basenames = sorted([f for f in os.listdir(self.path_x0) if f.endswith('.pt')])
-        if not self.tensor_files_basenames:
-            raise ValueError(f"No .pt tensor files found in {self.path_x0}. Ensure data preparation was successful.")
+        # Calculate sizes and total sample count
+        print("Indexing chunk files...")
+        self.chunk_sizes = [torch.load(p, map_location='cpu').shape[0] for p in tqdm(self.x0_chunks, desc="Reading chunk sizes")]
+        self.total_samples = sum(self.chunk_sizes)
+        self.cumulative_sizes = np.cumsum([0] + self.chunk_sizes)
+        self.num_original_samples = self.total_samples
         
-        self.num_original_samples = len(self.tensor_files_basenames)
-
-        print(f"FlowDataset: Found {self.num_original_samples} tensor sets in {self.root_dir}.")
-        if self.apply_hflip:
-            print("Horizontal flipping augmentation is ENABLED.")
-        else:
-            print("Horizontal flipping augmentation is DISABLED.")
-
+        self.cache = {} # Cache to accelerate access
+        print(f"FlowDataset: Found {len(self.x0_chunks)} chunks, total {self.total_samples} samples. Augmentation(hflip): {'ENABLED' if apply_hflip else 'DISABLED'}.")
 
     def __len__(self):
-        """
-        Returns the total size of the dataset.
-        
-        This is doubled if horizontal flip augmentation is enabled.
-        """
         return self.num_original_samples * 2 if self.apply_hflip else self.num_original_samples
+
+    def find_chunk(self, idx):
+        """Finds the chunk and local index for a given global sample index."""
+        chunk_idx = np.searchsorted(self.cumulative_sizes, idx + 1) - 1
+        local_idx = idx - self.cumulative_sizes[chunk_idx]
+        return chunk_idx, local_idx
+    
+    def get_chunk(self, chunk_idx):
+        """Loads a chunk into the cache if not already present."""
+        if chunk_idx in self.cache:
+            return self.cache[chunk_idx]
+
+        basename = os.path.basename(self.x0_chunks[chunk_idx]).replace('_x0.pt', '')
+        lr_path = os.path.join(self.root_dir, 'lr', f"{basename}_lr.pt")
+        x1_path = os.path.join(self.root_dir, 'x1', f"{basename}_x1.pt")
+        
+        # If a chunk file is missing or corrupt, torch.load will raise an error and stop the program.
+        # This is intentional, as a broken chunk is a critical system-level error.
+        lr_tensor = torch.load(lr_path)
+        x0_tensor = torch.load(self.x0_chunks[chunk_idx])
+        x1_tensor = torch.load(x1_path)
+        
+        self.cache[chunk_idx] = (lr_tensor, x0_tensor, x1_tensor)
+        # Keep cache size reasonable
+        if len(self.cache) > 4:
+            self.cache.pop(list(self.cache.keys())[0])
+
+        return self.cache[chunk_idx]
 
     def __getitem__(self, idx):
         """
-        Retrieves a data triplet (lr, x0, x1) at the given index.
-
-        If augmentation is enabled, indices from num_original_samples onwards
-        will correspond to horizontally flipped versions of the original samples.
-
-        Args:
-            idx (int): The index of the item to retrieve.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-                - low_resolution_image (C, H_low, W_low)
-                - x0_tensor (e.g., noise) (C, H_orig, W_orig)
-                - x1_tensor (e.g., target image) (C, H_orig, W_orig)
+        Retrieves a data triplet. Skips and reports if an individual sample
+        within a chunk is somehow corrupted (though less likely with chunks).
         """
-        should_flip_this_sample = False
-        if self.apply_hflip:
-            # If the index is in the second half of the dataset, we should flip.
-            should_flip_this_sample = idx >= self.num_original_samples
-            # Get the index of the original file on disk.
-            actual_idx = idx % self.num_original_samples
-        else:
-            actual_idx = idx
-
-        basename = self.tensor_files_basenames[actual_idx]
-        
+        # Add a try-except block to handle potential errors and return None
         try:
-            # Load tensors from their respective files
-            lr = torch.load(os.path.join(self.path_lr, basename))
-            x0 = torch.load(os.path.join(self.path_x0, basename))
-            x1 = torch.load(os.path.join(self.path_x1, basename))
-
-            # Apply horizontal flip if this sample requires it
-            if should_flip_this_sample:
-                lr = TF.hflip(lr)
-                x0 = TF.hflip(x0)
-                x1 = TF.hflip(x1)
-
-            # The trainer expects data in the order (low_res_image, x0, x1)
-            return lr, x0, x1
+            should_flip = self.apply_hflip and (idx >= self.num_original_samples)
+            actual_idx = idx % self.num_original_samples
             
+            chunk_idx, local_idx = self.find_chunk(actual_idx)
+            lr_chunk, x0_chunk, x1_chunk = self.get_chunk(chunk_idx)
+
+            lr = lr_chunk[local_idx]
+            x0 = x0_chunk[local_idx]
+            x1 = x1_chunk[local_idx]
+
+            if should_flip:
+                lr, x0, x1 = TF.hflip(lr), TF.hflip(x0), TF.hflip(x1)
+            
+            return lr, x0, x1
         except Exception as e:
-            print(f"Error loading or processing tensor for basename '{basename}' at index {idx}: {e}. Returning dummy tensors.")
-            # Return dummy tensors on error to prevent training crash
-            return torch.zeros(1), torch.zeros(1), torch.zeros(1)
+            print(f"\n--- WARNING: Skipping corrupted sample from chunk ---")
+            print(f"Error processing global index {idx} (actual: {actual_idx}): {e}")
+            # traceback.print_exc()
+            print(f"---------------------------------------------------\n")
+            return None
+

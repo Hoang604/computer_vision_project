@@ -1,211 +1,144 @@
 import torch
 from torch.utils.data import DataLoader
 import os
-import argparse
-import traceback
-
-# Assuming these files are part of the project structure and can be imported
-import torch
-from torch.utils.data import DataLoader
-import os
 import yaml
 import traceback
-from src.diffusion_modules.unet import Unet
-from src.trainers.rectified_flow_trainer import RectifiedFlowTrainer
-from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
-from src.data_handling.dataset import FlowDataset
 from types import SimpleNamespace
 
-def train_flow(config):
+# --- Handle project-level imports ---
+try:
+    import sys
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Assuming the script is in a 'scripts' or similar folder, and 'src' is at the project root
+    parent_dir = os.path.dirname(os.path.dirname(current_dir))
+    if parent_dir not in sys.path:
+        sys.path.append(parent_dir)
+
+    from src.diffusion_modules.unet import Unet
+    from src.trainers.rectified_flow_trainer import RectifiedFlowTrainer
+    from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
+    from src.data_handling.dataset import ImageDatasetRRDB, FlowDataset
+except ImportError as e:
+    print(f"Import Error: {e}. Please ensure 'src' directory is in the Python path.")
+    exit(1)
+
+def run_rectified_flow_training(config):
     """
-    Main function to set up and run the Rectified Flow training process.
+    Main function to set up and run the entire Rectified Flow training process.
     """
     # --- Setup Device ---
-    if config.device.startswith("cuda") and not torch.cuda.is_available():
-        print(f"CUDA device {config.device} requested but CUDA not available. Using CPU.")
-        device = torch.device("cpu")
-    elif not config.device.startswith("cuda") and config.device != "cpu":
-        print(f"Invalid device specified: {config.device}. Using CPU if CUDA not available, else cuda:0.")
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(config.device)
+    device = torch.device(config.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # --- Setup Dataset and DataLoader ---
-    print(f"Loading prepared flow data from: {config.flow_prepared_data_folder}")
-    train_dataset = FlowDataset(
-        prepared_data_folder=config.flow_prepared_data_folder,
-        apply_hflip=config.apply_hflip
-    )
-    print(f"Loaded {len(train_dataset)} samples for training.")
+    # --- Setup Dataset and DataLoader based on training mode ---
+    print(f"Selected training mode: '{config.mode}'")
+    if config.mode == 'rectified':
+        data_path = config.rectified_data_folder
+        val_path = config.val_data_folder
+        DatasetClass = ImageDatasetRRDB
+    elif config.mode == 'reflow':
+        data_path = config.reflow_data_folder
+        val_path = config.val_data_folder
+        DatasetClass = FlowDataset
+    else:
+        raise ValueError(f"Unknown training mode: {config.mode}")
+
+    print(f"Loading training data from: {data_path}")
+    train_dataset = DatasetClass(data_path, apply_hflip=True)
+    
+    def safe_collate(batch):
+        """
+        A custom collate function that filters out None values from a batch.
+        This is crucial for robustly handling corrupted samples that are skipped by the Dataset.
+        """
+        # Filter out samples that were returned as None (due to errors)
+        batch = list(filter(lambda x: x is not None, batch))
+        
+        # If the entire batch was corrupted, return empty tensors
+        if not batch:
+            if len(train_dataset) > 0:
+                 # The number of tensors depends on the dataset mode
+                 return (torch.tensor([]),) * len(train_dataset[0])
+            else:
+                 return tuple()
+            
+        # If there are valid samples, use the default collate function to stack them
+        return torch.utils.data.dataloader.default_collate(batch)
 
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        drop_last=True
+        train_dataset, batch_size=config.batch_size, shuffle=True,
+        num_workers=config.num_workers, pin_memory=True, drop_last=True,
+        collate_fn=safe_collate # Use the robust collate function
     )
 
     val_loader = None
-    if config.val_flow_prepared_data_folder:
-        print(f"Loading validation data from: {config.val_flow_prepared_data_folder}")
-        val_dataset = FlowDataset(
-            prepared_data_folder=config.val_flow_prepared_data_folder,
-            apply_hflip=config.apply_val_hflip
-        )
-        print(f"Loaded {len(val_dataset)} samples for validation.")
+    if val_path:
+        print(f"Loading validation data from: {val_path}")
+        val_dataset = DatasetClass(val_path, apply_hflip=False)
         val_loader = DataLoader(
-            val_dataset,
-            batch_size=config.val_batch_size,
-            shuffle=False,
-            num_workers=config.num_workers,
-            pin_memory=True,
-            drop_last=False
+            val_dataset, batch_size=config.val_batch_size, shuffle=False,
+            num_workers=config.num_workers, pin_memory=True,
+            collate_fn=safe_collate # Use the robust collate function here as well
         )
-    else:
-        print("No validation data folder provided. Skipping validation.")
 
-    # --- Initialize RRDBNet Context Extractor ---
-    rrdb_context_config = {
-        'in_nc': config.img_channels,
-        'out_nc': config.img_channels,
-        'num_feat': config.rrdb_num_feat_context,
-        'num_block': config.rrdb_num_block_context,
-        'gc': config.rrdb_gc_context,
-        'sr_scale': config.downscale_factor
-    }
-    try:
-        if not config.rrdb_weights_path_context_extractor or not os.path.exists(config.rrdb_weights_path_context_extractor):
-            raise FileNotFoundError(f"RRDBNet weights for context extractor not found at: {config.rrdb_weights_path_context_extractor}")
+    # --- Initialize Models ---
+    print("Initializing UNet and Context Extractor models...")
+    context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(
+        model_path=config.rrdb_weights_path, device=device
+    )
+    context_extractor_model.eval()
 
-        context_extractor_model = BasicRRDBNetTrainer.load_model_for_evaluation(
-            model_path=config.rrdb_weights_path_context_extractor,
-            model_config=rrdb_context_config,
-            device=device
-        )
-        context_extractor_model.eval()
-        print(f"RRDBNet context extractor loaded from {config.rrdb_weights_path_context_extractor}")
-        print(f"Context extractor config: nf={config.rrdb_num_feat_context}, nb={config.rrdb_num_block_context}, gc={config.rrdb_gc_context}")
-    except Exception as e:
-        print(f"Error loading RRDBNet context extractor: {e}")
-        print("Please check the path and configuration of the context extractor RRDBNet.")
-        return
-
-    # --- Initialize UNet Model ---
     unet_model = Unet(
         base_dim=config.unet_base_dim,
         dim_mults=tuple(config.unet_dim_mults),
         use_attention=config.use_attention,
-        cond_dim=config.rrdb_num_feat_context,
-        rrdb_num_blocks=config.rrdb_num_block_context
+        cond_dim=context_extractor_model.model.rrdb_in_channels # Infer cond_dim from the loaded RRDB model
     ).to(device)
-    print(f"UNet model initialized with base_dim={config.unet_base_base_dim}, cond_dim={config.rrdb_num_feat_context}")
 
-    # --- Initialize RectifiedFlowTrainer ---
+    # --- Initialize Trainer, Optimizer, and Scheduler ---
     flow_trainer = RectifiedFlowTrainer(device=device, mode=config.mode)
-
-    # --- Initialize Optimizer ---
     optimizer = torch.optim.AdamW(
-        unet_model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=config.weight_decay
+        unet_model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
-    print(f"Optimizer: AdamW, LR: {config.learning_rate}, Weight Decay: {config.weight_decay}")
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.max_train_steps, eta_min=config.eta_min_lr
+    )
 
-    # --- Initialize Scheduler ---
-    scheduler = None
-    if config.scheduler_type.lower() != "none":
-        if config.scheduler_type.lower() == "steplr":
-            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.lr_decay_epochs, gamma=config.lr_gamma)
-            print(f"Using StepLR scheduler with step_size_epochs={config.lr_decay_epochs}, gamma={config.lr_gamma}")
-        elif config.scheduler_type.lower() == "cosineannealinglr":
-            t_max_epochs_for_scheduler = config.cosine_t_max_epochs if config.cosine_t_max_epochs is not None else config.epochs
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max_epochs_for_scheduler, eta_min=config.eta_min_lr)
-            print(f"Using CosineAnnealingLR scheduler with T_max_epochs={t_max_epochs_for_scheduler}, eta_min={config.eta_min_lr}")
-        else:
-            print(f"Warning: Unknown scheduler type '{config.scheduler_type}'. No scheduler will be used.")
-            config.scheduler_type = "none"
-
-    # --- Load Checkpoint if available ---
-    start_epoch = 0
-    best_loss = float('inf')
-    weights_path_unet_resume = config.weights_path_unet_resume if config.weights_path_unet_resume and os.path.exists(config.weights_path_unet_resume) else None
-    if weights_path_unet_resume:
-        print(f"Attempting to load UNet checkpoint from: {weights_path_unet_resume}")
-        start_epoch, best_loss = RectifiedFlowTrainer.load_checkpoint_for_resume(
-            device=device,
-            model=unet_model,
-            optimizer=optimizer,
-            scheduler=scheduler if config.scheduler_type.lower() != "none" else None,
-            checkpoint_path=weights_path_unet_resume,
-            verbose_load=config.verbose_load
+    # --- Load Checkpoint to Resume (if specified) ---
+    start_step, best_loss = 0, float('inf')
+    if config.resume_checkpoint_path and os.path.exists(config.resume_checkpoint_path):
+        start_step, best_loss = RectifiedFlowTrainer.load_checkpoint_for_resume(
+            device, unet_model, optimizer, scheduler, config.resume_checkpoint_path
         )
-        print(f"Loaded UNet checkpoint. Resuming from epoch {start_epoch}, best loss: {best_loss:.6f}")
     else:
-        print("No valid pre-trained UNet weights path found or specified. Starting UNet training from scratch.")
+        print("No valid resume checkpoint specified. Starting training from scratch.")
 
     # --- Start Training ---
-    print(f"\nStarting Rectified Flow training (mode: {config.mode})...")
+    print(f"\n--- Starting Training (mode: {config.mode}) ---")
     try:
         flow_trainer.train(
             train_dataset=train_loader,
             model=unet_model,
             optimizer=optimizer,
-            scheduler=scheduler if config.scheduler_type.lower() != "none" else None,
+            scheduler=scheduler,
             context_extractor=context_extractor_model,
             val_dataset=val_loader,
-            pretrained_model_path=config.pretrained_model_path_for_reflow if config.mode == 'reflow' else None,
-            val_every_n_epochs=config.val_every_n_epochs,
+            max_train_steps=config.max_train_steps,
             accumulation_steps=config.accumulation_steps,
-            epochs=config.epochs,
-            start_epoch=start_epoch,
+            start_step=start_step,
             best_loss=best_loss,
-            log_dir_param=config.continue_log_dir,
-            checkpoint_dir_param=config.continue_checkpoint_dir,
-            log_dir_base=config.base_log_dir,
-            checkpoint_dir_base=config.base_checkpoint_dir
+            validate_every_n_steps=config.validate_every_n_steps,
+            save_every_n_steps=config.save_every_n_steps,
+            log_dir_param=config.log_dir,
+            checkpoint_dir_param=config.checkpoint_dir
         )
-    except Exception as train_error:
-        print(f"\nERROR occurred during training: {train_error}")
+    except Exception as e:
+        print(f"\nFATAL ERROR during training: {e}")
         traceback.print_exc()
-        print("This might be due to issues like CUDA memory, shape mismatches, or data loading.")
         raise
 
-# --- Script Entry Point ---
-if __name__ == "__main__":
-    with open('config_rectified_flow.yaml', 'r') as file:
-        config_dict = yaml.safe_load(file)
-    
-    config = SimpleNamespace(**config_dict)
 
-    # --- Validate Arguments ---
-    if config.mode == 'reflow' and not config.pretrained_model_path_for_reflow:
-        print("\nWARNING: 'reflow' mode is selected but '--pretrained_model_path_for_reflow' is not provided. The trainer will likely fail.")
-        print("Please provide the path to the model from the previous training stage.\n")
 
-    # --- Print Configuration ---
-    effective_batch_size = config.batch_size * config.accumulation_steps
-    print("--- Rectified Flow Training Configuration ---")
-    print(f"Prepared Data Folder: {config.flow_prepared_data_folder}")
-    print(f"Image Size (HR): {config.img_size}x{config.img_size}")
-    print(f"Device: {config.device}, Mode: {config.mode}")
-    print(f"Epochs: {config.epochs}")
-    print(f"Batch Size (per device): {config.batch_size}, Validation Batch Size: {config.val_batch_size}")
-    print(f"Accumulation Steps: {config.accumulation_steps}, Effective Batch Size: {effective_batch_size}")
-    print(f"Initial Learning Rate: {config.learning_rate}, Weight Decay: {config.weight_decay}")
-    print(f"Scheduler Type: {config.scheduler_type}")
-    print(f"UNet: base_dim={config.unet_base_dim}, dim_mults={tuple(config.unet_dim_mults)}, use_attention={config.use_attention}")
-    print(f"Context Extractor RRDBNet Weights: {config.rrdb_weights_path_context_extractor}")
-    print(f"Context Extractor RRDBNet Config for U-Net condition: nf={config.rrdb_num_feat_context}, nb={config.rrdb_num_block_context}")
-    if config.weights_path_unet_resume:
-        print(f"UNet Weights Path (for resume): {config.weights_path_unet_resume}")
-    if config.mode == 'reflow':
-        print(f"Pre-trained Model for Reflow: {config.pretrained_model_path_for_reflow}")
-    print("-------------------------------------------")
-
-    train_flow(config) 
 
 # def train_flow(args):
 #     """

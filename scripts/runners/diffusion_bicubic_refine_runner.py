@@ -8,7 +8,7 @@ from src.trainers.diffusion_trainer import DiffusionTrainer
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 from types import SimpleNamespace
 
-def train_diffusion(config):
+def run_diffusion_bicubic_refine_training(config):
     """
     Main function to set up and run the diffusion model training
     using preprocessed data (LR, HR_RRDB, HR_Original).
@@ -32,10 +32,9 @@ def train_diffusion(config):
     # --- Setup Dataset and DataLoader ---
     print(f"Loading preprocessed data (LR, HR_RRDB, HR_Orig) from: {config.preprocessed_data_folder}")
     train_dataset = ImageDataset(
-        preprocessed_folder_path=config.preprocessed_data_folder,
+        folder_path=config.preprocessed_data_folder,
         img_size=config.img_size,
         downscale_factor=config.downscale_factor,
-        apply_hflip=config.apply_hflip
     )
     print(f"Loaded {len(train_dataset)} samples for training.")
 
@@ -51,10 +50,9 @@ def train_diffusion(config):
     if config.val_preprocessed_data_folder:
         print(f"Loading validation data from: {config.val_preprocessed_data_folder}")
         val_dataset = ImageDataset(
-            preprocessed_folder_path=config.val_preprocessed_data_folder,
+            folder_path=config.val_preprocessed_data_folder,
             img_size=config.img_size,
             downscale_factor=config.downscale_factor,
-            apply_hflip=config.apply_val_hflip
         )
         print(f"Loaded {len(val_dataset)} samples for validation.")
         val_loader = DataLoader(
@@ -192,30 +190,3 @@ def train_diffusion(config):
         traceback.print_exc()
         print("This might be due to issues like CUDA memory, shape mismatches, or data loading.")
         raise
-
-# --- Script Entry Point ---
-if __name__ == "__main__":
-    with open('config_diffusion_bicubic_refine.yaml', 'r') as file:
-        config_dict = yaml.safe_load(file)
-    
-    config = SimpleNamespace(**config_dict)
-
-    # --- Print Configuration ---
-    effective_batch_size = config.batch_size * config.accumulation_steps
-    print(f"--- Diffusion Model Training Configuration (On-the-fly Feature Extraction) ---")
-    print(f"Preprocessed Data Folder (LR, HR_RRDB, HR_Orig): {config.preprocessed_data_folder}")
-    print(f"Image Size (HR): {config.img_size}x{config.img_size}")
-    print(f"Device: {config.device}")
-    print(f"Epochs: {config.epochs}")
-    print(f"Batch Size (per device): {config.batch_size}, Validation Batch Size: {config.val_batch_size}")
-    print(f"Accumulation Steps: {config.accumulation_steps}, Effective Batch Size: {effective_batch_size}")
-    print(f"Initial Learning Rate: {config.learning_rate}, Weight Decay: {config.weight_decay}")
-    print(f"Scheduler Type: {config.scheduler_type}")
-    print(f"Diffusion Timesteps: {config.timesteps}, Mode: {config.diffusion_mode}")
-    print(f"UNet: base_dim={config.unet_base_dim}, dim_mults={tuple(config.unet_dim_mults)}, use_attention={config.use_attention}")
-    print(f"Context Extractor RRDBNet Weights: {config.rrdb_weights_path_context_extractor}")
-    print(f"Context Extractor RRDBNet Config for U-Net condition: nf={config.rrdb_num_feat_context}, nb={config.rrdb_num_block_context}, gc={config.rrdb_gc_context}")
-    if config.weights_path_unet: print(f"UNet Weights Path (for resume): {config.weights_path_unet}")
-    print(f"-----------------------------------------------------------------------------")
-
-    train_diffusion(config)

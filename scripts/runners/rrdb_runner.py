@@ -6,7 +6,7 @@ from src.data_handling.dataset import ImageDataset
 import os
 from types import SimpleNamespace
 
-def train_rrdb_main(config):
+def run_rrdb_training(config):
     """
     Main function to set up and run RRDBNet training with configurable schedulers
     and optional validation.
@@ -130,20 +130,3 @@ def train_rrdb_main(config):
         import traceback
         traceback.print_exc()
         raise
-
-if __name__ == "__main__":
-    with open('config.yaml', 'r') as file:
-        config_dict = yaml.safe_load(file)
-    
-    config = SimpleNamespace(**config_dict)
-
-    # --- Print Configuration ---
-    print(f"--- RRDBNet Training Configuration ---")
-    for arg_name, arg_val in vars(config).items():
-        print(f"  {arg_name}: {arg_val}")
-    print(f"  SR Scale (from downscale_factor): {config.downscale_factor}")
-    if config.scheduler_type.lower() == 'cosineannealinglr' and config.cosine_t_max is None:
-        print(f"  CosineAnnealingLR T_max will default to total epochs: {config.epochs}")
-    print(f"------------------------------------")
-
-    train_rrdb_main(config)
