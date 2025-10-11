@@ -218,7 +218,7 @@ class DiffusionTrainer:
         return target
 
     def _perform_batch_step(self, model, context_extractor, batch_data, optimizer,
-                            accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True):
+                            accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True, is_learning_residual=True):
         """
         Perform a single batch step of training or validation.
         This function handles the forward pass, loss calculation, and optimizer step
@@ -241,11 +241,15 @@ class DiffusionTrainer:
         """
         # Unpack batch data: (low_res, upscaled_rrdb, original_hr, original_residual)
         # lr_features_batch_of_lists is NO LONGER in batch_data
-        low_res_image_batch, _, _, residual_image_batch = batch_data
+        low_res_image_batch, _, original_hr_batch, residual_image_batch = batch_data
+        if is_learning_residual:
+            target_batch = residual_image_batch
+        else:
+            target_batch = original_hr_batch
 
         low_res_image_batch = low_res_image_batch.to(self.device)
-        residual_image_batch = residual_image_batch.to(self.device)
-        actual_batch_size = residual_image_batch.shape[0]
+        target_batch = target_batch.to(self.device)
+        actual_batch_size = target_batch.shape[0]
 
         # --- On-the-fly Feature Extraction ---
         condition_features_list = None
@@ -260,10 +264,10 @@ class DiffusionTrainer:
         # --- Diffusion Process and Model Prediction ---
         with torch.set_grad_enabled(is_training): # Enable gradients only if training
             t = torch.randint(0, self.timesteps, (actual_batch_size,), device=self.device, dtype=torch.long)
-            residual_image_batch_t, noise_added = self.q_sample(residual_image_batch, t) # Noise the target residual
-            target_for_unet = self._get_training_target(noise_added, residual_image_batch, t) # Get U-Net's target
+            target_batch_t, noise_added = self.q_sample(target_batch, t) # Noise the target residual
+            target_for_unet = self._get_training_target(noise_added, target_batch, t) # Get U-Net's target
 
-            predicted_output = model(residual_image_batch_t, t, condition=condition_features_list)
+            predicted_output = model(target_batch_t, t, condition=condition_features_list)
             loss = F.mse_loss(predicted_output, target_for_unet)
 
         # --- Gradient Accumulation and Optimizer Step (if training) ---
@@ -315,7 +319,7 @@ class DiffusionTrainer:
                                         current_best_val_loss,
                                         val_loss_this_epoch,
                                         global_step_optimizer, best_checkpoint_path, writer,
-                                        dataset_for_samples, context_extractor): # Added context_extractor
+                                        dataset_for_samples, context_extractor, is_learning_residual=True): # Added context_extractor
         """Handle end-of-epoch tasks: log loss, save checkpoint, step scheduler, generate sample images."""
         mean_train_loss = np.mean(train_epoch_losses) if train_epoch_losses else float('nan')
         print(f"Epoch {epoch+1} Average Training Loss ({self.mode}): {mean_train_loss:.4f}")
@@ -392,14 +396,14 @@ class DiffusionTrainer:
 
         if dataset_for_samples is not None: # Generate samples
             try:
-                self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor) # Pass context_extractor
+                self._generate_and_log_samples(model, dataset_for_samples, epoch, writer, context_extractor, is_learning_residual) # Pass context_extractor
             except Exception as e_sample:
                 print(f"Error during sample generation: {e_sample}")
                 import traceback
                 traceback.print_exc()
         return new_best_val_loss
 
-    def _generate_and_log_samples(self, model, dataset_loader, epoch, writer, context_extractor): # Added context_extractor
+    def _generate_and_log_samples(self, model, dataset_loader, epoch, writer, context_extractor, is_learning_residual): # Added context_extractor
         """
         Generate sample images from the model and log them to TensorBoard.
         This function takes a batch of low-resolution images, generates
@@ -489,33 +493,53 @@ class DiffusionTrainer:
             )
 
         # Reconstruct images and prepare for logging
-        for i in range(generated_residuals_batch.shape[0]):
-            lr_img_display = (low_res_b[i].cpu().numpy() + 1.0) / 2.0
-            hr_rrdb_display = (up_scale_b[i].cpu().numpy() + 1.0) / 2.0 # This is HR_RRDB
-            hr_orig_display = (original_b[i].cpu().numpy() + 1.0) / 2.0
-            
-            predicted_residual_display = (generated_residuals_batch[i].cpu().numpy() + 1.0) / 2.0
-            final_hr_constructed = torch.clamp(up_scale_b[i] + generated_residuals_batch[i], -1.0, 1.0)
-            final_hr_constructed_display = (final_hr_constructed.cpu().numpy() + 1.0) / 2.0
-            
-            true_residual_display = (residual_b_gt[i].cpu().numpy() + 1.0) / 2.0 # Residual_b_gt is [-2,2]
+        if is_learning_residual:
+            for i in range(generated_residuals_batch.shape[0]):
+                lr_img_display = (low_res_b[i].cpu().numpy() + 1.0) / 2.0
+                hr_rrdb_display = (up_scale_b[i].cpu().numpy() + 1.0) / 2.0 # This is HR_RRDB
+                hr_orig_display = (original_b[i].cpu().numpy() + 1.0) / 2.0
+                
+                predicted_residual_display = (generated_residuals_batch[i].cpu().numpy() + 1.0) / 2.0
+                final_hr_constructed = torch.clamp(up_scale_b[i] + generated_residuals_batch[i], -1.0, 1.0)
+                final_hr_constructed_display = (final_hr_constructed.cpu().numpy() + 1.0) / 2.0
+                
+                true_residual_display = (residual_b_gt[i].cpu().numpy() + 1.0) / 2.0 # Residual_b_gt is [-2,2]
 
-            sample_images_data.append({
-                "low_res": np.clip(lr_img_display, 0, 1),
-                "hr_rrdb": np.clip(hr_rrdb_display, 0, 1),
-                "generated_residual": np.clip(predicted_residual_display, 0, 1),
-                "final_hr_refined": np.clip(final_hr_constructed_display, 0, 1),
-                "original_hr_gt": np.clip(hr_orig_display, 0, 1),
-                "true_residual_gt": np.clip(true_residual_display, 0, 1)
-            })
+                sample_images_data.append({
+                    "low_res": np.clip(lr_img_display, 0, 1),
+                    "hr_rrdb": np.clip(hr_rrdb_display, 0, 1),
+                    "generated_residual": np.clip(predicted_residual_display, 0, 1),
+                    "final_hr_refined": np.clip(final_hr_constructed_display, 0, 1),
+                    "original_hr_gt": np.clip(hr_orig_display, 0, 1),
+                    "true_residual_gt": np.clip(true_residual_display, 0, 1)
+                })
+            for i, imgs_dict in enumerate(sample_images_data):
+                writer.add_image(f'Sample_{i}/01_LowRes_Input', imgs_dict["low_res"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/02_HR_RRDB_Base', imgs_dict["hr_rrdb"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/03_Predicted_Residual_Diffusion', imgs_dict["generated_residual"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/04_Final_HR_Refined', imgs_dict["final_hr_refined"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/05_Original_HR_GroundTruth', imgs_dict["original_hr_gt"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/06_True_Residual_GT_(HR_orig-HR_rrdb)', imgs_dict["true_residual_gt"], epoch + 1, dataformats='CHW')
+        else:
+            for i in range(generated_residuals_batch.shape[0]):
+                lr_img_display = (low_res_b[i].cpu().numpy() + 1.0) / 2.0
+                hr_rrdb_display = (up_scale_b[i].cpu().numpy() + 1.0) / 2.0 # This is HR_RRDB
+                hr_orig_display = (original_b[i].cpu().numpy() + 1.0) / 2.0
+                
+                final_hr_constructed_display = (generated_residuals_batch[i].cpu().numpy() + 1.0) / 2.0
+                
+                sample_images_data.append({
+                    "low_res": np.clip(lr_img_display, 0, 1),
+                    "hr_rrdb": np.clip(hr_rrdb_display, 0, 1),
+                    "final_hr_generated": np.clip(final_hr_constructed_display, 0, 1),
+                    "original_hr_gt": np.clip(hr_orig_display, 0, 1),
+                })
 
-        for i, imgs_dict in enumerate(sample_images_data):
-            writer.add_image(f'Sample_{i}/01_LowRes_Input', imgs_dict["low_res"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/02_HR_RRDB_Base', imgs_dict["hr_rrdb"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/03_Predicted_Residual_Diffusion', imgs_dict["generated_residual"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/04_Final_HR_Refined', imgs_dict["final_hr_refined"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/05_Original_HR_GroundTruth', imgs_dict["original_hr_gt"], epoch + 1, dataformats='CHW')
-            writer.add_image(f'Sample_{i}/06_True_Residual_GT_(HR_orig-HR_rrdb)', imgs_dict["true_residual_gt"], epoch + 1, dataformats='CHW')
+            for i, imgs_dict in enumerate(sample_images_data):
+                writer.add_image(f'Sample_{i}/01_LowRes_Input', imgs_dict["low_res"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/02_HR_RRDB_Base', imgs_dict["hr_rrdb"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/04_Final_HR_Generated', imgs_dict["final_hr_generated"], epoch + 1, dataformats='CHW')
+                writer.add_image(f'Sample_{i}/05_Original_HR_GroundTruth', imgs_dict["original_hr_gt"], epoch + 1, dataformats='CHW')
 
         print(f"Logged {len(sample_images_data)} sample images to TensorBoard.")
         model.train() # Revert model to train mode
@@ -537,6 +561,7 @@ class DiffusionTrainer:
                 checkpoint_dir_param=None,
                 log_dir_base="./logs_diffusion",
                 checkpoint_dir_base="./checkpoints_diffusion",
+                is_learning_residual=True
              ) -> None:
         """
         Main training loop for the diffusion model.
@@ -596,7 +621,7 @@ class DiffusionTrainer:
             for batch_idx, batch_data in enumerate(train_dataset):
                 loss_value, current_accumulation_idx, global_step_optimizer, updated_optimizer = self._perform_batch_step(
                     model, context_extractor, batch_data, optimizer,
-                    accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True
+                    accumulation_steps, current_accumulation_idx, global_step_optimizer, is_training=True, is_learning_residual=is_learning_residual
                 )
 
                 train_epoch_losses.append(loss_value)
@@ -622,7 +647,8 @@ class DiffusionTrainer:
                 current_val_loss_for_this_epoch, # Pass this epoch's validation loss (can be None)
                 global_step_optimizer, best_checkpoint_path, writer,
                 val_dataset if val_dataset else train_dataset, # Dataset for samples
-                context_extractor # Pass context_extractor for sample generation
+                context_extractor, # Pass context_extractor for sample generation
+                is_learning_residual=is_learning_residual
             )
 
         # --- After all epochs ---
