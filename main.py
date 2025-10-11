@@ -27,7 +27,8 @@ try:
     from scripts.runners.diffusion_bicubic_refine_runner import run_diffusion_bicubic_refine_training
     from scripts.runners.rectified_flow_runner import run_rectified_flow_training
 except ImportError as e:
-    logging.error(f"Import Error: {e}. Please ensure you are running main.py from the project's root directory.")
+    logging.error(
+        f"Import Error: {e}. Please ensure you are running main.py from the project's root directory.")
     sys.exit(1)
 
 # --- Model and Runner Mapping ---
@@ -41,12 +42,14 @@ MODEL_RUNNERS = {
 }
 
 # --- Command Handling Functions ---
+
+
 def handle_train(args: argparse.Namespace):
     """
     Handles the logic for the 'train' command.
     """
     logging.info(f"Received 'train' command for model: '{args.model}'")
-    
+
     try:
         with open(args.config, 'r', encoding='utf-8') as f:
             config_dict = yaml.safe_load(f)
@@ -66,6 +69,7 @@ def handle_train(args: argparse.Namespace):
     else:
         # This case rarely occurs due to 'choices' in argparse, but it's good practice to have it.
         logging.error(f"Invalid model '{args.model}' specified.")
+
 
 def handle_help(args: argparse.Namespace):
     """
@@ -87,9 +91,12 @@ def handle_help(args: argparse.Namespace):
         print("   python main.py train --model rectified_flow --config configs/config_rectified_flow.yaml")
         print("\n------------------------------------------------------------------------------------")
     else:
-        print(f"\nNo detailed help available for the command '{command_name}'.")
+        print(
+            f"\nNo detailed help available for the command '{command_name}'.")
 
 # --- Main Function ---
+
+
 def main():
     """
     Main function to parse arguments and launch the corresponding commands.
@@ -98,34 +105,38 @@ def main():
         description="A centralized manager for the Computer Vision Super-Resolution project.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    
-    subparsers = parser.add_subparsers(dest="command", title="Available Commands", metavar="<command>")
+
+    subparsers = parser.add_subparsers(
+        dest="command", title="Available Commands", metavar="<command>")
     subparsers.required = True
 
     # --- Define 'train' command ---
-    train_parser = subparsers.add_parser("train", help="Starts a training session.")
+    train_parser = subparsers.add_parser(
+        "train", help="Starts a training session.")
     train_parser.add_argument(
-        "--model", 
-        type=str, 
-        required=True, 
-        choices=MODEL_RUNNERS.keys(), # Automatically get the list of models.
+        "--model",
+        type=str,
+        required=True,
+        choices=MODEL_RUNNERS.keys(),  # Automatically get the list of models.
         help="The name of the model architecture to train."
     )
     train_parser.add_argument(
-        "--config", 
-        type=str, 
-        required=True, 
+        "--config",
+        type=str,
+        required=True,
         help="Path to the .yaml configuration file for the selected model."
     )
-    train_parser.set_defaults(func=handle_train) # Assign the handler function for this command.
+    # Assign the handler function for this command.
+    train_parser.set_defaults(func=handle_train)
 
     # --- Define 'help' command ---
-    help_parser = subparsers.add_parser("help", help="Displays a detailed guide for a command.")
+    help_parser = subparsers.add_parser(
+        "help", help="Displays a detailed guide for a command.")
     help_parser.add_argument(
-        "topic", 
-        type=str, 
-        nargs='?', 
-        default="train", 
+        "topic",
+        type=str,
+        nargs='?',
+        default="train",
         help="The command to get help for (e.g., 'train')."
     )
     help_parser.set_defaults(func=handle_help)
@@ -136,7 +147,7 @@ def main():
         return
 
     args = parser.parse_args()
-    args.func(args) # Call the assigned handler function.
+    args.func(args)  # Call the assigned handler function.
 
 
 if __name__ == "__main__":
