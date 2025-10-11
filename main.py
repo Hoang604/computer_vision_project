@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import sys
 import os
 import logging
+import matplotlib.pyplot as plt
+import numpy as np
 
 # --- Configure Logging ---
 logging.basicConfig(
@@ -27,7 +29,7 @@ try:
     # For interactive inference
     from scripts.rrdb_infer import main as run_rrdb_inference
     from scripts.diffusion_infer import main as run_diffusion_infer
-    from scripts.rfpp_super_resolution_infer import main as run_rfpp_inference
+    from scripts.rfpp_super_resolution_infer import upscale_image as run_rfpp_inference
 except ImportError as e:
     logging.error(
         f"Import Error: {e}. Please ensure you are running main.py from the project's root directory.")
@@ -61,6 +63,13 @@ INFERENCE_CONFIG_MAPPING = {
 }
 
 # --- Command Handling Functions ---
+
+def show_img(img):
+    img = img.to('cpu').numpy()
+    img = img.transpose(1, 2, 0).clip(0, 1)
+    plt.imshow(img)
+    plt.axis('off')
+    plt.show()
 
 
 def handle_train(model_name: str):
@@ -97,7 +106,7 @@ def handle_train(model_name: str):
         logging.error(f"Invalid model '{model_name}' specified.")
 
 
-def handle_inference(model_name: str):
+def handle_inference(model_name: str, file_path:str):
     """
     Handles the logic for running inference with a model.
     """
@@ -108,11 +117,12 @@ def handle_inference(model_name: str):
 
         if config_path:
             logging.info(f"Using configuration file: {config_path}")
-            runner(config_path)
+            upscaled_img = runner(file_path, config_path)
+            show_img(upscaled_img)
         else:
             # For runners that don't need a config file
-            runner()
-
+            upscaled_img = runner(file_path)
+            show_img(upscaled_img)
         logging.info(f"--- Finished inference for model '{model_name}' ---")
     else:
         logging.error(
@@ -121,7 +131,7 @@ def handle_inference(model_name: str):
 # --- Main Interactive Function ---
 
 
-def main():
+def main(file_path):
     """
     Main function to provide an interactive CLI.
     """
@@ -130,7 +140,17 @@ def main():
     while True:
         print("\n----------------------------------------------------")
         action = input(
-            "What would you like to do? (train/inference/exit): ").lower().strip()
+            """What would you like to do? (1-3):
+            1. Train
+            2. Inference
+            3. Exit
+        """).strip()
+        if action == '1':
+            action = 'train'
+        elif action == '2':
+            action = 'inference'
+        elif action == '3':
+            action = 'exit'
 
         if action == 'train':
             print("\nSelect a model to train:")
@@ -162,7 +182,7 @@ def main():
                 model_idx = int(choice) - 1
                 if 0 <= model_idx < len(models):
                     model_name = models[model_idx]
-                    handle_inference(model_name)
+                    handle_inference(model_name, file_path)
                 else:
                     print("Invalid choice. Please select a valid number.")
             except ValueError:
@@ -177,4 +197,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    file_path = 'data/000265.jpg'  # Example input path
+    main(file_path)

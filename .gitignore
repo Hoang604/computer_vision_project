@@ -18,3 +18,4 @@ web_app/uploads/
 web_app/static/
 test.html
 *.txt
+pretrain_rfpp

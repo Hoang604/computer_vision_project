@@ -11,6 +11,7 @@ from torch.nn import DataParallel
 from tqdm import tqdm
 import argparse
 import yaml
+import logging
 from torchvision.utils import save_image
 from torchvision import transforms
 import os
@@ -20,9 +21,57 @@ import torch
 import sys
 sys.path.append('.')
 
+
+logger = logging.getLogger(__name__)
+
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+    )
+
 @torch.no_grad()
 def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', label=None, inversion=False,
                           time_schedule=None, sampler='default', operator=None, ref_img_path="", output_dir=""):
+    """
+    Generates an image by solving the probability flow ODE with data consistency.
+
+    This function takes an initial noise tensor and iteratively refines it by following the
+    vector field predicted by the model. It incorporates a data consistency step to guide
+    the generation process for inverse problems like super-resolution.
+
+    Args:
+        model (torch.nn.Module): The pre-trained generative model.
+        z1 (torch.Tensor): The initial noise tensor of shape (batch, channels, H, W).
+        N (int): The total number of discretization steps for the ODE solver.
+        arg (argparse.Namespace): A namespace containing various configuration parameters,
+            such as `gradient_scale` and `likebaseline`.
+        use_tqdm (bool, optional): Whether to display a progress bar. Defaults to True.
+        solver (str, optional): The ODE solver to use ('euler' or 'heun'). Defaults to 'euler'.
+        label (torch.Tensor, optional): Conditional labels for the model. Defaults to None.
+        inversion (bool, optional): Flag for inversion process. Defaults to False.
+        time_schedule (list, optional): A custom list of time steps to use. Defaults to None.
+        sampler (str, optional): The sampler type. Defaults to 'default'.
+        operator (object): The inverse problem operator (e.g., for super-resolution),
+            which provides degradation and transpose methods.
+        ref_img_path (str): The file path to the reference low-resolution image for data consistency.
+        output_dir (str): Directory to save intermediate outputs like the degraded image.
+
+    Returns:
+        tuple: A tuple containing:
+            - traj (list): A list of tensors representing the generation trajectory from z1 to z0.
+            - x0hat_list (list): A list of predicted clean images (x0) at each step.
+            - max_memory (float): The peak GPU memory allocated during the process in MB.
+            - total_time (float): The total time taken for the sampling loop in seconds.
+    """
+    logger.info(
+        "Starting sample_ode_generative | solver=%s | steps=%s | device=%s | ref_img=%s",
+        solver,
+        N,
+        z1.device,
+        ref_img_path
+    )
+
     assert solver in ['euler', 'heun']
     assert len(z1.shape) == 4
     assert operator is not None
@@ -37,6 +86,7 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
 
     if solver == 'heun':
         if N % 2 == 0:
+            logger.error("Invalid step count for Heun solver: N=%s", N)
             raise ValueError("N must be odd when using Heun's method.")
         N = (N + 1) // 2
 
@@ -49,7 +99,7 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
     if time_schedule is not None:
         time_schedule = time_schedule + [0]
         sigma_schedule = [t_ / (1-t_ + 1e-6) for t_ in time_schedule]
-        print(f"sigma_schedule: {sigma_schedule}")
+        logger.debug("Custom sigma schedule: %s", sigma_schedule)
     else:
         def t_func(i): return i / N
         if inversion:
@@ -61,6 +111,12 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
 
     # Load and preprocess image
     image = Image.open(ref_img_path).convert("RGB").resize((64, 64))
+    # show image
+    plt.figure()
+    plt.imshow(image)
+    plt.axis('off')
+    plt.title('Input Image')
+    plt.show()
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
@@ -81,8 +137,16 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
         label = F.one_hot(
             label, num_classes=config["label_dim"]).type(torch.float32)
 
-    # Track max GPU memory usage
-    torch.cuda.reset_peak_memory_stats()
+    # Track max GPU memory usage when CUDA is available
+    track_gpu_memory = torch.cuda.is_available() and z1.device.type == "cuda"
+    if track_gpu_memory:
+        logger.debug("Resetting CUDA peak memory stats before sampling loop.")
+        torch.cuda.reset_peak_memory_stats()
+    else:
+        logger.info(
+            "Skipping CUDA memory tracking (CUDA available: %s, tensor device: %s)",
+            torch.cuda.is_available(), z1.device.type
+        )
     start_time = time.time()
 
     traj.append(z.detach().clone())
@@ -119,16 +183,116 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
         traj.append(z.detach().clone())
 
     end_time = time.time()
-    max_memory = torch.cuda.max_memory_allocated() / (1024**2)  # Convert to MB
+    if track_gpu_memory:
+        max_memory = torch.cuda.max_memory_allocated() / (1024**2)  # Convert to MB
+    else:
+        max_memory = 0.0
     total_time = end_time - start_time
+
+    logger.info(
+        "Completed sample_ode_generative | duration=%.2fs | peak_mem=%.2fMB",
+        total_time,
+        max_memory
+    )
 
     return traj, x0hat_list, max_memory, total_time
 
+def upscale_image(input_image_path, inference_config_path='configs/config_rfpp_inference.yaml'):
+    """Upscale a single image using RFPP super-resolution and log key diagnostics."""
+    logger.info("Upscale request received | image=%s | config=%s", input_image_path, inference_config_path)
+
+    # Load inference settings
+    with open(inference_config_path, 'r') as f:
+        arg_dict = yaml.safe_load(f)
+    arg = argparse.Namespace(**arg_dict)
+
+    # Parse model config
+    config = parse_config(arg.config)
+    arg.res = config['img_resolution']
+    arg.input_nc = config['in_channels']
+    arg.label_dim = config['label_dim']
+
+    # Initialize model
+    model_class = DhariwalUNet if config['unet_type'] == 'adm' else SongUNet
+    flow_model = model_class(**config)
+    flow_model = EDMPrecondVel(flow_model, use_fp16=config.get('use_fp16', False))
+
+    # Load checkpoint
+    if arg.ckpt is None or not os.path.exists(arg.ckpt):
+        raise ValueError(f"Model checkpoint not found: {arg.ckpt}")
+    flow_model.load_state_dict(torch.load(arg.ckpt, map_location="cpu"))
+
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info("Upscale image using device: %s", device)
+    if device.type == "cpu":
+        logger.warning("CUDA not available; some GPU-only features will be skipped.")
+    flow_model = flow_model.to(device).eval()
+
+    # Setup inverse problem operator
+    sampling_config = SamplingConfig()
+    sampling_config.inverse_problem = arg.inverse_problem
+    sampling_config.noise_sigma = arg.noise_sigma
+    sampling_config.kernel_size = getattr(arg, 'kernel_size', 3)
+    sampling_config.blur_sigma = getattr(arg, 'blur_sigma', 1.0)
+    sampling_config.mask_size = getattr(arg, 'mask_size', 32)
+    sampling_config.scale_factor = arg.scale_factor
+
+    operator = get_inverse_operator(sampling_config, device=device)
+
+    # Generate initial noise
+    z = torch.randn(1, arg.input_nc, arg.res, arg.res).to(device)
+    z = z * (1-1e-5)
+
+    # Setup label if needed
+    if arg.label_dim > 0:
+        label_onehot = torch.eye(arg.label_dim, device=device)[
+            torch.randint(0, arg.label_dim, (1,), device=device)]
+    else:
+        label_onehot = None
+
+    # Parse time steps
+    t_steps = [float(t) for t in arg.t_steps.split(",")
+               ] if hasattr(arg, 't_steps') and arg.t_steps else None
+    if t_steps:
+        t_steps[0] = 1-1e-5
+
+    # Create temporary output directory
+    temp_dir = os.path.join(arg.dir, "tmp_upscale") if hasattr(arg, 'dir') else os.path.join(os.getcwd(), "tmp_upscale")
+    os.makedirs(temp_dir, exist_ok=True)
+    logger.debug("Temporary output directory: %s", temp_dir)
+
+    # Perform super-resolution
+    traj, x0_list, _, _ = sample_ode_generative(
+        flow_model, z1=z, N=arg.N, arg=arg, use_tqdm=True,
+        solver=arg.solver, label=label_onehot, time_schedule=t_steps,
+        sampler=getattr(arg, 'sampler', 'default'), operator=operator,
+        ref_img_path=input_image_path, output_dir=temp_dir
+    )
+
+    # Return the final upscaled image (normalized to [0, 1])
+    upscaled_image = traj[-1][0] * 0.5 + 0.5
+    logger.info("Upscale completed | image=%s", input_image_path)
+    return upscaled_image
+
 def main(inference_config_path='configs/config_rfpp_inference.yaml'):
+    """
+    Main function to set up and run the super-resolution inference process.
+
+    This function orchestrates the entire inference pipeline. It loads configuration
+    from a YAML file, initializes the model and its weights, sets up the environment
+    (directories, device), and then triggers the sampling process.
+
+    Args:
+        inference_config_path (str, optional): Path to the inference configuration
+            YAML file. Defaults to 'configs/config_rfpp_inference.yaml'.
+    """
     # Load inference settings from the YAML file
     with open(inference_config_path, 'r') as f:
         arg_dict = yaml.safe_load(f)
     arg = argparse.Namespace(**arg_dict)
+
+    logger.info("Starting batch inference | config=%s", inference_config_path)
 
     if not os.path.exists(arg.dir):
         os.makedirs(arg.dir)
@@ -150,18 +314,23 @@ def main(inference_config_path='configs/config_rfpp_inference.yaml'):
     os.makedirs(os.path.join(arg.dir, 'tmp'), exist_ok=True)
     os.environ['TMPDIR'] = os.path.join(arg.dir, 'tmp')
 
+    logger.info("Loaded model configuration: %s", arg.config)
+
     # Initialize model
     model_class = DhariwalUNet if config['unet_type'] == 'adm' else SongUNet
     flow_model = model_class(**config)
 
     # Setup device
     device_ids = str(arg.gpu).split(',')
-    device = torch.device("cuda")
-    print(f"Using {'multiple' if len(device_ids) > 1 else ''} GPU {arg.gpu}!")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        logger.info("Using %s GPU(s): %s", len(device_ids), arg.gpu)
+    else:
+        logger.warning("CUDA not available; falling back to CPU for inference.")
 
     pytorch_total_params = sum(p.numel()
                                for p in flow_model.parameters()) / 1000000
-    print(f"Total parameters: {pytorch_total_params}M")
+    logger.info("Model parameter count: %.2fM", pytorch_total_params)
 
     flow_model = EDMPrecondVel(
         flow_model, use_fp16=config.get('use_fp16', False))
@@ -170,13 +339,14 @@ def main(inference_config_path='configs/config_rfpp_inference.yaml'):
         raise ValueError(f"Model checkpoint not found or not provided. Please update 'ckpt' in {inference_config_path}")
     flow_model.load_state_dict(torch.load(arg.ckpt, map_location="cpu"))
 
-    if len(device_ids) > 1:
+    if len(device_ids) > 1 and device.type == "cuda":
         flow_model = DataParallel(flow_model)
     flow_model = flow_model.to(device).eval()
 
     if arg.compile:
         flow_model = torch.compile(
             flow_model, mode="reduce-overhead", fullgraph=True)
+        logger.info("Model compilation via torch.compile enabled.")
 
     # Save configs
     with open(os.path.join(arg.dir, 'config_sampling.json'), 'w') as f:
@@ -187,6 +357,25 @@ def main(inference_config_path='configs/config_rfpp_inference.yaml'):
 
 @torch.no_grad()
 def sample(arg, model, device):
+    """Run RFPP super-resolution sampling over all inputs in the configured directory.
+
+    The routine constructs the inverse-operator requested in ``arg`` and iterates over every image inside ``arg.input_dir``. For each image it draws an initial latent ``z``, performs probability-flow ODE sampling via :func:`sample_ode_generative`, saves the resulting super-resolved outputs and optional latent trajectories, and aggregates runtime metrics.
+
+    Args:
+        arg (argparse.Namespace): Runtime configuration namespace loaded from the inference
+            YAML file. Must contain directories, solver hyperparameters, and inverse problem
+            settings such as ``scale_factor`` and ``gradient_scale``.
+        model (torch.nn.Module): Pretrained RFPP model already placed on ``device`` and set to
+            evaluation mode. The model is called inside the sampler to predict velocities.
+        device (torch.device): CUDA device used for both latent tensors and inverse operator
+            computations.
+
+    Returns:
+        None: Results, metrics, and optional trajectories are written to disk under
+        ``arg.dir``. The function raises an error if inputs are missing or no images are found.
+    """
+    logger.info("Starting sampling loop | input_dir=%s | device=%s", arg.input_dir, device)
+
     output_dir = os.path.join(arg.dir, "samples")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -201,6 +390,7 @@ def sample(arg, model, device):
     sampling_config.scale_factor = arg.scale_factor
 
     operator = get_inverse_operator(sampling_config, device=device)
+    logger.debug("Inverse operator configured: %s", sampling_config)
 
     if not os.path.exists(arg.input_dir):
         raise ValueError(f"Input directory not found. Please update 'input_dir' in your config.")
@@ -209,7 +399,7 @@ def sample(arg, model, device):
         glob.glob(os.path.join(arg.input_dir, "*.[pj][np][g]")))
     if not input_images:
         raise ValueError(f"No images found in {arg.input_dir}")
-    print(f"Found {len(input_images)} input images")
+    logger.info("Found %d input images for sampling", len(input_images))
 
     straightness_list = []
     nfes = []
