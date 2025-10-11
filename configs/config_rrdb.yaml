@@ -1,6 +1,6 @@
 # Dataset and Model args
 image_folder: preprocessed_data/rrdb_processed_train
-val_image_folder: 
+val_image_folder:
 img_size: 160
 img_channels: 3
 downscale_factor: 4
@@ -9,7 +9,7 @@ rrdb_num_block: 17
 rrdb_gc: 32
 
 # Training args
-device: 'cuda:1'
+device: "cuda:0"
 epochs: 60
 batch_size: 64
 val_batch_size: 64
@@ -23,23 +23,23 @@ num_workers: 4
 predict_residual: False
 
 # Scheduler args
-scheduler_type: 'CosineAnnealingLR'
+scheduler_type: "CosineAnnealingLR"
 step_lr_step_size: 200000
 step_lr_gamma: 0.5
-cosine_t_max: 
+cosine_t_max:
 cosine_eta_min: 0.0
 cosine_warm_t_0: 10
 cosine_warm_t_mult: 1
 cosine_warm_eta_min: 0.0
-plateau_mode: 'min'
+plateau_mode: "min"
 plateau_factor: 0.1
 plateau_patience: 10
 
 # Logging/Saving args
-exp_name: 
-base_log_dir: 'logs/rrdb'
-base_checkpoint_dir: 'checkpoints/rrdb'
-continue_log_dir: 
-continue_checkpoint_dir: 
-weights_path: 
+exp_name:
+base_log_dir: "logs/rrdb"
+base_checkpoint_dir: "checkpoints/rrdb"
+continue_log_dir:
+continue_checkpoint_dir:
+weights_path:
 save_every_n_epochs: 5

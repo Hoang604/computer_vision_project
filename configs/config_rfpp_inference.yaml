@@ -1,0 +1,73 @@
+# Configuration for Rectified Flow (RFPP) Super-Resolution Inference
+
+# --- Essential Paths ---
+# Directory to save the output samples
+dir: 'inference_outputs/rfpp_super_resolution'
+# Path to the pre-trained flow network checkpoint.
+# IMPORTANT: You must provide a valid path to your model checkpoint.
+ckpt: 'checkpoints/rfpp/your_model.pth' # PLEASE UPDATE THIS PATH
+# Directory containing the low-resolution input images for super-resolution.
+input_dir: 'data/low_res_test_images' # PLEASE UPDATE THIS PATH
+
+# --- Sampling Parameters ---
+# Number of sampling steps (N) for the ODE solver.
+N: 20
+# ODE solver to use ('euler' or 'heun').
+solver: 'euler'
+# Batch size for processing images.
+batchsize: 1
+# Random seed for reproducibility.
+seed: 0
+# A comma-separated list of timesteps to use, e.g., "1,0.75,0.5,0.25".
+# Set to null to use the default linear schedule.
+t_steps: null
+# Sampler type ('default' or 'new').
+sampler: 'default'
+
+# --- Model and Hardware ---
+# GPU device IDs to use, comma-separated (e.g., '0' or '0,1').
+gpu: '0'
+# Path to the model's JSON configuration file (used by the network itself).
+config: 'configs/cifar10_ve_aug.json'
+# Compile the model with torch.compile for potential speedup.
+compile: false
+
+# --- Inverse Problem Settings ---
+# Type of inverse problem. Should be 'super_resolution' for this script.
+# Other options: 'deblur', 'box_inpaint'
+inverse_problem: 'super_resolution'
+# Standard deviation of noise to add to the degraded image.
+noise_sigma: 0.0
+# Upscaling factor for super-resolution.
+scale_factor: 4
+# Kernel size for deblurring.
+kernel_size: 11
+# Blur sigma for deblurring.
+blur_sigma: 5.0
+# Box size for inpainting.
+mask_size: 20
+# Scale factor for the guidance gradient.
+gradient_scale: 100.0
+# If true, disables the mean loss in the guidance term.
+likebaseline: false
+
+# --- Output Options ---
+# If true, saves the full sampling trajectory as an image.
+save_traj: false
+# If true, saves the initial noise vectors (z) for distillation purposes.
+save_z: false
+# If true, saves data (not used in sample action).
+save_data: false
+
+# --- Other --- 
+# Action to perform ('sample' or 'interpolate').
+# The script is currently set up for the 'sample' action.
+action: 'sample'
+# Path to a single image for inversion (not used in the current sample action).
+data_path: null
+# Label for inversion.
+label_inv: null
+# Label for reconstruction.
+label_rec: null
+# Number of decoding steps for inversion.
+N_decode: 5

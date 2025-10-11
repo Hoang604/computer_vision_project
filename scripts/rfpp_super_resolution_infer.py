@@ -10,6 +10,7 @@ import json
 from torch.nn import DataParallel
 from tqdm import tqdm
 import argparse
+import yaml
 from torchvision.utils import save_image
 from torchvision import transforms
 import os
@@ -19,71 +20,8 @@ import torch
 import sys
 sys.path.append('.')
 
-
-def get_args():
-    parser = argparse.ArgumentParser(description='Configs')
-    parser.add_argument('--gpu', type=str, help='gpu index')
-    parser.add_argument('--dir', type=str, help='Saving directory name')
-    parser.add_argument('--ckpt', type=str, default=None,
-                        help='Flow network checkpoint')
-    parser.add_argument('--batchsize', type=int, default=1, help='Batch size')
-    parser.add_argument('--N', type=int, default=20,
-                        help='Number of sampling steps')
-    parser.add_argument('--save_traj', action='store_true',
-                        help='Save the trajectories')
-    parser.add_argument('--save_z', action='store_true',
-                        help='Save zs for distillation')
-    parser.add_argument('--save_data', action='store_true', help='Save data')
-    parser.add_argument('--solver', type=str,
-                        default='euler', help='ODE solvers')
-    parser.add_argument('--config', type=str, default=None,
-                        help='Decoder config path, must be .json file')
-    parser.add_argument('--seed', type=int, default=0, help='random seed')
-    parser.add_argument('--im_dir', type=str, help='Image dir')
-    parser.add_argument('--action', type=str,
-                        default='sample', help='sample or interpolate')
-    parser.add_argument('--compile', action='store_true',
-                        help='Compile the model')
-    parser.add_argument('--t_steps', type=str, default=None,
-                        help='t_steps, e.g. 1,0.75,0.5,0.25')
-    parser.add_argument('--sampler', type=str,
-                        default='default', help='default / new')
-
-    # Inversion
-    parser.add_argument('--data_path', type=str, default=None,
-                        help='Image path for inversion')
-    parser.add_argument('--label_inv', type=int, help='Label for inversion')
-    parser.add_argument('--label_rec', type=int,
-                        help='Label for reconstruction')
-    parser.add_argument('--N_decode', type=int, default=5,
-                        help='Number of decoding sampling steps')
-
-    # Inverse problem arguments
-    parser.add_argument('--inverse_problem', type=str, default='none',
-                        help='Type of inverse problem (deblur/box_inpaint/super_resolution)')
-    parser.add_argument('--noise_sigma', type=float,
-                        default=0.0, help='Noise sigma for degradation')
-    parser.add_argument('--kernel_size', type=int, default=11,
-                        help='Kernel size for deblurring')
-    parser.add_argument('--blur_sigma', type=float,
-                        default=5.0, help='Blur sigma for deblurring')
-    parser.add_argument('--mask_size', type=int, default=20,
-                        help='Box size for inpainting')
-    parser.add_argument('--scale_factor', type=int, default=4,
-                        help='Scale factor for super resolution')
-    parser.add_argument('--input_dir', type=str,
-                        help='Directory containing input images')
-
-    parser.add_argument('--gradient_scale', type=float,
-                        default=100.0, help='Scale factor for gradients')
-    parser.add_argument('--likebaseline', action='store_true',
-                        help='Like baseline disable mean loss')
-
-    return parser.parse_args()
-
-
 @torch.no_grad()
-def sample_ode_generative(model, z1, N, use_tqdm=True, solver='euler', label=None, inversion=False,
+def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', label=None, inversion=False,
                           time_schedule=None, sampler='default', operator=None, ref_img_path="", output_dir=""):
     assert solver in ['euler', 'heun']
     assert len(z1.shape) == 4
@@ -186,8 +124,12 @@ def sample_ode_generative(model, z1, N, use_tqdm=True, solver='euler', label=Non
 
     return traj, x0hat_list, max_memory, total_time
 
+def main(inference_config_path='configs/config_rfpp_inference.yaml'):
+    # Load inference settings from the YAML file
+    with open(inference_config_path, 'r') as f:
+        arg_dict = yaml.safe_load(f)
+    arg = argparse.Namespace(**arg_dict)
 
-def main(arg):
     if not os.path.exists(arg.dir):
         os.makedirs(arg.dir)
     assert arg.config is not None
@@ -200,7 +142,7 @@ def main(arg):
     if os.path.exists(os.path.join(arg.dir, "samples")):
         print(
             f"Directory {os.path.join(arg.dir, 'samples')} already exists. Exiting...")
-        exit()
+        return
 
     os.makedirs(os.path.join(arg.dir, "samples"), exist_ok=True)
     os.makedirs(os.path.join(arg.dir, "zs"), exist_ok=True)
@@ -213,7 +155,7 @@ def main(arg):
     flow_model = model_class(**config)
 
     # Setup device
-    device_ids = arg.gpu.split(',')
+    device_ids = str(arg.gpu).split(',')
     device = torch.device("cuda")
     print(f"Using {'multiple' if len(device_ids) > 1 else ''} GPU {arg.gpu}!")
 
@@ -224,8 +166,8 @@ def main(arg):
     flow_model = EDMPrecondVel(
         flow_model, use_fp16=config.get('use_fp16', False))
 
-    if arg.ckpt is None:
-        raise ValueError("Model checkpoint must be provided")
+    if arg.ckpt is None or not os.path.exists(arg.ckpt):
+        raise ValueError(f"Model checkpoint not found or not provided. Please update 'ckpt' in {inference_config_path}")
     flow_model.load_state_dict(torch.load(arg.ckpt, map_location="cpu"))
 
     if len(device_ids) > 1:
@@ -240,10 +182,7 @@ def main(arg):
     with open(os.path.join(arg.dir, 'config_sampling.json'), 'w') as f:
         json.dump(vars(arg), f, indent=4)
 
-    if arg.action == 'sample':
-        sample(arg, flow_model, device)
-    else:
-        raise NotImplementedError(f"Action {arg.action} not implemented")
+    sample(arg, flow_model, device)
 
 
 @torch.no_grad()
@@ -255,12 +194,16 @@ def sample(arg, model, device):
     sampling_config = SamplingConfig()
     sampling_config.inverse_problem = arg.inverse_problem
     sampling_config.noise_sigma = arg.noise_sigma
+    # kernel_size, blur_sigma, mask_size are not in the yaml, so we need to handle them.
     sampling_config.kernel_size = arg.kernel_size
     sampling_config.blur_sigma = arg.blur_sigma
     sampling_config.mask_size = arg.mask_size
     sampling_config.scale_factor = arg.scale_factor
 
     operator = get_inverse_operator(sampling_config, device=device)
+
+    if not os.path.exists(arg.input_dir):
+        raise ValueError(f"Input directory not found. Please update 'input_dir' in your config.")
 
     input_images = sorted(
         glob.glob(os.path.join(arg.input_dir, "*.[pj][np][g]")))
@@ -290,7 +233,7 @@ def sample(arg, model, device):
                 t_steps[0] = 1-1e-5
             z = z * (1-1e-5)
             traj_uncond, traj_uncond_x0, max_memory, total_time = sample_ode_generative(
-                model, z1=z, N=arg.N, use_tqdm=False, solver=arg.solver,
+                model, z1=z, N=arg.N, arg=arg, use_tqdm=False, solver=arg.solver,
                 label=label_onehot, time_schedule=t_steps, sampler=arg.sampler,
                 operator=operator, ref_img_path=img_path, output_dir=output_dir
             )
@@ -319,12 +262,16 @@ def sample(arg, model, device):
                 np.save(path_z, z[idx].cpu().numpy())
 
     # Save metrics
-    straightness_list = torch.stack(straightness_list).view(-1).cpu().numpy()
-    straightness_mean = np.mean(straightness_list).item()
-    straightness_std = np.std(straightness_list).item()
-    print(f"straightness.shape: {straightness_list.shape}")
-    print(
-        f"straightness_mean: {straightness_mean}, straightness_std: {straightness_std}")
+    if straightness_list:
+        straightness_list = torch.stack(straightness_list).view(-1).cpu().numpy()
+        straightness_mean = np.mean(straightness_list).item()
+        straightness_std = np.std(straightness_list).item()
+        print(f"straightness.shape: {straightness_list.shape}")
+        print(
+            f"straightness_mean: {straightness_mean}, straightness_std: {straightness_std}")
+    else:
+        straightness_mean, straightness_std = 0, 0
+
     nfes_mean = np.mean(nfes) if len(nfes) > 0 else arg.N
     print(f"nfes_mean: {nfes_mean}")
     avg_time = np.mean(total_times)
@@ -343,12 +290,12 @@ def sample(arg, model, device):
         json.dump(result_dict, f, indent=4)
 
     # Plot straightness distribution
-    plt.figure()
-    plt.hist(straightness_list, bins=20)
-    plt.savefig(os.path.join(arg.dir, "straightness.png"))
-    plt.close()
+    if straightness_list:
+        plt.figure()
+        plt.hist(straightness_list, bins=20)
+        plt.savefig(os.path.join(arg.dir, "straightness.png"))
+        plt.close()
 
 
 if __name__ == "__main__":
-    arg = get_args()
-    main(arg)
+    main()
