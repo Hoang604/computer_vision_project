@@ -27,9 +27,10 @@ try:
     from scripts.runners.rectified_flow_runner import run_rectified_flow_training
 
     # For interactive inference
-    from scripts.rrdb_infer import main as run_rrdb_inference
-    from scripts.diffusion_infer import main as run_diffusion_infer
+    from scripts.rrdb_infer import inference as run_rrdb_inference, plot_inference_result as rrdb_plot
+    from scripts.diffusion_infer import inference as run_diffusion_infer, plot_inference_result as diffusion_plot
     from scripts.rfpp_super_resolution_infer import upscale_image as run_rfpp_inference
+
 except ImportError as e:
     logging.error(
         f"Import Error: {e}. Please ensure you are running main.py from the project's root directory.")
@@ -59,10 +60,18 @@ INFERENCE_RUNNERS = {
 }
 
 INFERENCE_CONFIG_MAPPING = {
-    'rectified_flow': 'configs/config_rfpp_inference.yaml'
+    'rectified_flow': 'configs/config_rfpp_inference.yaml',
+    'diffusion_rrdb_refine': 'configs/diffusion_rrdb_refine_inference.yaml',
+    'rrdb': 'configs/rrdb_inference.yaml'
+}
+
+PLOT_FUNCTION = {
+    'rrdb': rrdb_plot,
+    'diffusion_rrdb_refine': diffusion_plot
 }
 
 # --- Command Handling Functions ---
+
 
 def show_img(img):
     img = img.to('cpu').numpy()
@@ -106,7 +115,7 @@ def handle_train(model_name: str):
         logging.error(f"Invalid model '{model_name}' specified.")
 
 
-def handle_inference(model_name: str, file_path:str):
+def handle_inference(model_name: str, file_path: str):
     """
     Handles the logic for running inference with a model.
     """
@@ -117,10 +126,19 @@ def handle_inference(model_name: str, file_path:str):
 
         if config_path:
             logging.info(f"Using configuration file: {config_path}")
-            upscaled_img = runner(file_path, config_path)
-            show_img(upscaled_img)
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_dict = yaml.safe_load(f)
+            config = SimpleNamespace(**config_dict)
+            upscaled_img = runner(config, file_path)
+            plot_func = PLOT_FUNCTION.get(model_name)
+            if plot_func:
+                # Generate output path based on model name and input file
+                base_name = os.path.splitext(os.path.basename(file_path))[0]
+                output_path = f'{config.output_folder}/{base_name}_result.png'
+                plot_func(upscaled_img, output_path)
         else:
             # For runners that don't need a config file
+            logging.info("No configuration file needed for this inference.")
             upscaled_img = runner(file_path)
             show_img(upscaled_img)
         logging.info(f"--- Finished inference for model '{model_name}' ---")
@@ -197,5 +215,5 @@ def main(file_path):
 
 
 if __name__ == "__main__":
-    file_path = 'data/000265.jpg'  # Example input path
+    file_path = 'data/000001.jpg'  # Example input path
     main(file_path)

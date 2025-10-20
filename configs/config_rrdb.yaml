@@ -1,5 +1,5 @@
 # Dataset and Model args
-image_folder: preprocessed_data/rrdb_processed_train
+image_folder: data
 val_image_folder:
 img_size: 160
 img_channels: 3
@@ -11,7 +11,7 @@ rrdb_gc: 32
 # Training args
 device: "cuda:0"
 epochs: 60
-batch_size: 64
+batch_size: 1
 val_batch_size: 64
 val_every_n_epochs: 1
 accumulation_steps: 4

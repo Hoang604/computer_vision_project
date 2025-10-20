@@ -30,6 +30,7 @@ if not logging.getLogger().hasHandlers():
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
     )
 
+
 @torch.no_grad()
 def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', label=None, inversion=False,
                           time_schedule=None, sampler='default', operator=None, ref_img_path="", output_dir=""):
@@ -127,8 +128,10 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
     downsampled = downsample(preprocessed)
     upsampled = upsample(downsampled)
     filename = os.path.splitext(os.path.basename(ref_img_path))[0]
-    save_image(upsampled * 0.5 + 0.5,
-               os.path.join(output_dir, f"{filename}_degraded.png"))
+    save_image(downsampled * 0.5 + 0.5,
+               os.path.join(output_dir, f"{filename}_downsampled.png"))
+    save_image(preprocessed * 0.5 + 0.5,
+               os.path.join(output_dir, f"{filename}_preprocessed.png"))
 
     config = model.module.config if hasattr(model, 'module') else model.config
     if config["label_dim"] > 0 and label is None:
@@ -150,7 +153,12 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
     start_time = time.time()
 
     traj.append(z.detach().clone())
-    for i in tq(range(len(time_schedule[:-1]))):
+    save_image(z.detach().clone() * 0.5 + 0.5,
+               os.path.join(output_dir, f"{filename}_z_step_000.png"))
+
+    pbar = tq(range(len(time_schedule[:-1])))
+    still_navigate = True
+    for i in pbar:
         t = torch.ones((batchsize), device=z1.device) * time_schedule[i]
         t_next = torch.ones((batchsize), device=z1.device) * time_schedule[i+1]
         dt = t_next[0] - t[0]
@@ -164,22 +172,31 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
             vt = (vt + vt_next) / 2
             x0hat = z_next - vt_next * t_next.view(-1, 1, 1, 1)
 
+        save_image(x0hat.detach().clone() * 0.5 + 0.5,
+                   os.path.join(output_dir, f"{filename}_x0hat_step_{i}.png"))
         x0hat_list.append(x0hat)
 
-        if i < N-1:
-            with torch.enable_grad():
-                z = z.detach().requires_grad_()
-                z_h = z - t[0] * vt
+        with torch.enable_grad():
+            z = z.detach().requires_grad_()
+            z_h = z - t[0] * vt
+            loss = torch.mean(torch.nn.functional.mse_loss(downsample(z_h), downsampled, reduction="none") *
+                              operator.get_mask(shape=downsampled.shape))
+            if loss < 0.005:
+                still_navigate = False
 
+            if still_navigate and i < N-1:
                 if arg.likebaseline:
-                    z = z.detach() - arg.gradient_scale * (downsample(z_h) - downsampled)
+                    z = z.detach() - arg.gradient_scale * \
+                        (downsample(z_h) - downsampled)
                 else:
-                    loss = torch.mean(torch.nn.functional.mse_loss(downsample(z_h), downsampled, reduction="none") *
-                                      operator.get_mask(shape=downsampled.shape))
+                    save_image(downsample(z_h).detach().clone(
+                    ) * 0.5 + 0.5, os.path.join(output_dir, f"{filename}_z_h_downsample_step{i}.png"))
                     grads = torch.autograd.grad(loss, z)[0]
                     z = z.detach() - arg.gradient_scale * grads
-
+        pbar.set_description(f"Loss: {loss.item():.4f}")
         z = z.detach().clone() + vt * dt
+        save_image(x0hat.detach().clone() * 0.5 + 0.5,
+                   os.path.join(output_dir, f"{filename}_z_step_{i}.png"))
         traj.append(z.detach().clone())
 
     end_time = time.time()
@@ -197,9 +214,11 @@ def sample_ode_generative(model, z1, N, arg, use_tqdm=True, solver='euler', labe
 
     return traj, x0hat_list, max_memory, total_time
 
+
 def upscale_image(input_image_path, inference_config_path='configs/config_rfpp_inference.yaml'):
     """Upscale a single image using RFPP super-resolution and log key diagnostics."""
-    logger.info("Upscale request received | image=%s | config=%s", input_image_path, inference_config_path)
+    logger.info("Upscale request received | image=%s | config=%s",
+                input_image_path, inference_config_path)
 
     # Load inference settings
     with open(inference_config_path, 'r') as f:
@@ -215,18 +234,21 @@ def upscale_image(input_image_path, inference_config_path='configs/config_rfpp_i
     # Initialize model
     model_class = DhariwalUNet if config['unet_type'] == 'adm' else SongUNet
     flow_model = model_class(**config)
-    flow_model = EDMPrecondVel(flow_model, use_fp16=config.get('use_fp16', False))
+    flow_model = EDMPrecondVel(
+        flow_model, use_fp16=config.get('use_fp16', False))
 
     # Load checkpoint
     if arg.ckpt is None or not os.path.exists(arg.ckpt):
         raise ValueError(f"Model checkpoint not found: {arg.ckpt}")
-    flow_model.load_state_dict(torch.load(arg.ckpt, map_location="cpu"))
+    flow_model.load_state_dict(torch.load(
+        arg.ckpt, map_location="cpu", weights_only=True))
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Upscale image using device: %s", device)
     if device.type == "cpu":
-        logger.warning("CUDA not available; some GPU-only features will be skipped.")
+        logger.warning(
+            "CUDA not available; some GPU-only features will be skipped.")
     flow_model = flow_model.to(device).eval()
 
     # Setup inverse problem operator
@@ -258,7 +280,8 @@ def upscale_image(input_image_path, inference_config_path='configs/config_rfpp_i
         t_steps[0] = 1-1e-5
 
     # Create temporary output directory
-    temp_dir = os.path.join(arg.dir, "tmp_upscale") if hasattr(arg, 'dir') else os.path.join(os.getcwd(), "tmp_upscale")
+    temp_dir = os.path.join(arg.dir, "tmp_upscale") if hasattr(
+        arg, 'dir') else os.path.join(os.getcwd(), "tmp_upscale")
     os.makedirs(temp_dir, exist_ok=True)
     logger.debug("Temporary output directory: %s", temp_dir)
 
@@ -274,6 +297,7 @@ def upscale_image(input_image_path, inference_config_path='configs/config_rfpp_i
     upscaled_image = traj[-1][0] * 0.5 + 0.5
     logger.info("Upscale completed | image=%s", input_image_path)
     return upscaled_image
+
 
 def main(inference_config_path='configs/config_rfpp_inference.yaml'):
     """
@@ -326,7 +350,8 @@ def main(inference_config_path='configs/config_rfpp_inference.yaml'):
     if device.type == "cuda":
         logger.info("Using %s GPU(s): %s", len(device_ids), arg.gpu)
     else:
-        logger.warning("CUDA not available; falling back to CPU for inference.")
+        logger.warning(
+            "CUDA not available; falling back to CPU for inference.")
 
     pytorch_total_params = sum(p.numel()
                                for p in flow_model.parameters()) / 1000000
@@ -336,7 +361,8 @@ def main(inference_config_path='configs/config_rfpp_inference.yaml'):
         flow_model, use_fp16=config.get('use_fp16', False))
 
     if arg.ckpt is None or not os.path.exists(arg.ckpt):
-        raise ValueError(f"Model checkpoint not found or not provided. Please update 'ckpt' in {inference_config_path}")
+        raise ValueError(
+            f"Model checkpoint not found or not provided. Please update 'ckpt' in {inference_config_path}")
     flow_model.load_state_dict(torch.load(arg.ckpt, map_location="cpu"))
 
     if len(device_ids) > 1 and device.type == "cuda":
@@ -374,7 +400,8 @@ def sample(arg, model, device):
         None: Results, metrics, and optional trajectories are written to disk under
         ``arg.dir``. The function raises an error if inputs are missing or no images are found.
     """
-    logger.info("Starting sampling loop | input_dir=%s | device=%s", arg.input_dir, device)
+    logger.info("Starting sampling loop | input_dir=%s | device=%s",
+                arg.input_dir, device)
 
     output_dir = os.path.join(arg.dir, "samples")
     os.makedirs(output_dir, exist_ok=True)
@@ -393,7 +420,8 @@ def sample(arg, model, device):
     logger.debug("Inverse operator configured: %s", sampling_config)
 
     if not os.path.exists(arg.input_dir):
-        raise ValueError(f"Input directory not found. Please update 'input_dir' in your config.")
+        raise ValueError(
+            f"Input directory not found. Please update 'input_dir' in your config.")
 
     input_images = sorted(
         glob.glob(os.path.join(arg.input_dir, "*.[pj][np][g]")))
@@ -453,7 +481,8 @@ def sample(arg, model, device):
 
     # Save metrics
     if straightness_list:
-        straightness_list = torch.stack(straightness_list).view(-1).cpu().numpy()
+        straightness_list = torch.stack(
+            straightness_list).view(-1).cpu().numpy()
         straightness_mean = np.mean(straightness_list).item()
         straightness_std = np.std(straightness_list).item()
         print(f"straightness.shape: {straightness_list.shape}")

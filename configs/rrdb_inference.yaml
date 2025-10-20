@@ -1,0 +1,4 @@
+rrdb_path: /home/hoang/python/cv_project/checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth
+rrdb_320_path: /home/hoang/python/cv_project/checkpoints/rrdb/rrdb_320/rrdb_model_best.pth
+lr_size: 80
+output_folder: inference_results/rrdb

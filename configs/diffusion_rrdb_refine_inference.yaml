@@ -1,0 +1,6 @@
+rrdb_path: checkpoints/rrdb/rrdb_20250521-141800/rrdb_model_best.pth
+unet_path: checkpoints/diffusion/noise_20250526-070738/diffusion_model_noise_best.pth
+unet_320_path: checkpoints/diffusion/noise_320/diffusion_model_noise_best.pth
+output_folder: inference_results/diffusion_rrdb_refine
+num_timesteps: 40
+lr_size: 80
