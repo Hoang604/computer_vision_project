@@ -274,9 +274,8 @@ class DiffusionTrainer:
             print(
                 "Warning: Context extractor is None. U-Net will receive no explicit condition.")
 
-        residual_image_batch = original_hr_batch - rrdb_upscaled_batch
         if is_learning_residual:
-            target_batch = residual_image_batch
+            target_batch = original_hr_batch - rrdb_upscaled_batch
         else:
             target_batch = original_hr_batch
 
