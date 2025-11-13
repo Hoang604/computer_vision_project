@@ -4,7 +4,7 @@ from src.data_handling.dataset import ImageDatasetRRDB
 import os
 import yaml
 from src.diffusion_modules.unet import Unet
-from src.trainers.diffusion_NoisetoHR_trainer import DiffusionTrainer
+from src.trainers.diffusion_trainer import DiffusionTrainer
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
 from types import SimpleNamespace
 
@@ -97,7 +97,7 @@ def run_diffusion_no_refine_training(config):
     diffusion_trainer = DiffusionTrainer(
         timesteps=config.timesteps,
         device=device,
-        mode=config.diffusion_mode,
+        mode=config.diffusion_mode
     )
 
     # --- Initialize UNet Model ---
@@ -184,6 +184,7 @@ def run_diffusion_no_refine_training(config):
             checkpoint_dir_param=config.continue_checkpoint_dir,
             log_dir_base=config.base_log_dir,
             checkpoint_dir_base=config.base_checkpoint_dir,
+            is_learning_residual=False  # NoiseToHR mode: generate full HR images, not residuals
         )
     except Exception as train_error:
         print(f"\nERROR occurred during training: {train_error}")

@@ -1,4 +1,4 @@
-from src.trainers.diffusion_NoisetoHR_trainer import DiffusionTrainer, ImageGenerator
+from src.trainers.diffusion_trainer import DiffusionTrainer, ImageGenerator
 from src.data_handling.dataset import ImageDatasetRRDB
 import matplotlib.pyplot as plt
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer

@@ -1020,7 +1020,7 @@ class ResidualGenerator:
     A class for generating image residuals using a pre-trained diffusion model and a scheduler.
     This class can now accept pre-extracted features for conditioning.
 
-    Attributes:
+    Attributes: 
         img_channels (int): Number of channels in the image (e.g., 3 for RGB).
         img_size (int): Height and width of the image.
         device (str or torch.device): Device for tensor operations.
@@ -1219,3 +1219,214 @@ class ResidualGenerator:
         generated_residuals = image_latents
         print("Parallel residual generation complete.")
         return generated_residuals
+
+
+class ImageGenerator:
+    """
+    A class for generating full HR images using a pre-trained diffusion model.
+    
+    This is essentially the same as ResidualGenerator but with clearer naming
+    for the NoiseToHR use case where the output is a complete HR image,
+    not a residual to be added to an RRDB baseline.
+    
+    For backward compatibility and semantic clarity with existing NoiseToHR code.
+    
+    Attributes:
+        img_channels (int): Number of channels in the image (e.g., 3 for RGB).
+        img_size (int): Height and width of the image.
+        device (str or torch.device): Device for tensor operations.
+        num_train_timesteps (int): The number of timesteps the diffusion model was trained for.
+        predict_mode (str): The prediction type the model is expected to output.
+        scheduler (diffusers.SchedulerMixin): The scheduler instance.
+    """
+
+    def __init__(self,
+                 img_channels=3,
+                 img_size=256,
+                 device='cuda',
+                 num_train_timesteps=1000,
+                 predict_mode='noise'):
+        self.img_channels = img_channels
+        self.img_size = img_size
+        self.device = device
+        self.num_train_timesteps = num_train_timesteps
+
+        if predict_mode not in ["v_prediction", "noise"]:
+            raise ValueError(
+                "Prediction mode must be 'v_prediction' or 'noise'")
+        self.predict_mode = predict_mode
+
+        def cosine_beta_schedule(timesteps, s=0.008, dtype=torch.float32):
+            """
+            Generates a cosine noise schedule (betas).
+
+            Args:
+                timesteps (int): The number of timesteps.
+                s (float, optional): Small offset to prevent beta_t from being too small near t=0.
+                                     Defaults to 0.008.
+                dtype (torch.dtype, optional): Data type for the tensors. Defaults to torch.float32.
+
+            Returns:
+                torch.Tensor: The beta schedule.
+            """
+            steps = timesteps + 1
+            x = torch.linspace(0, timesteps, steps, dtype=dtype)
+            alphas_cumprod = torch.cos(
+                ((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+            alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+            betas = 1. - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+            return torch.clip(betas, 0., 0.999)
+
+        self.betas = cosine_beta_schedule(
+            self.num_train_timesteps).to(self.device)
+
+        scheduler_prediction_type = 'v_prediction' if self.predict_mode == 'v_prediction' else 'epsilon'
+
+        self.scheduler = DDIMScheduler(
+            num_train_timesteps=self.num_train_timesteps,
+            trained_betas=self.betas.cpu().numpy(),
+            beta_schedule="trained_betas",
+            prediction_type=scheduler_prediction_type,
+            clip_sample=False,
+            set_alpha_to_one=False,
+            steps_offset=1,
+        )
+        print(f"ImageGenerator initialized with {type(self.scheduler).__name__}, "
+              f"configured for model prediction_type='{self.predict_mode}' (scheduler prediction_type='{scheduler_prediction_type}'). "
+              f"Image size: {self.img_size}x{self.img_size}, Channels: {self.img_channels}.")
+
+    @torch.no_grad()
+    def generate_images(self, model, features, num_images=1, num_inference_steps=50, return_intermediate_steps=False):
+        """
+        Generates full HR images using the provided diffusion model and pre-extracted features.
+        Optionally returns all intermediate latents during the denoising process.
+
+        Args:
+            model (torch.nn.Module): The pre-trained diffusion model (e.g., a U-Net).
+            features (list[torch.Tensor] or None): A list of pre-extracted feature tensors
+                                                   to condition the U-Net. Each tensor in the list
+                                                   should be batched [num_images, C_feat, H_feat, W_feat].
+                                                   Can be None if the model is unconditional.
+            num_images (int, optional): Number of HR images to generate.
+                                        Must match the batch size of `features` if provided. Defaults to 1.
+            num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
+            return_intermediate_steps (bool, optional): If True, returns a list of all intermediate
+                                                        latents. Defaults to False.
+
+        Returns:
+            torch.Tensor or list[torch.Tensor]:
+                - If return_intermediate_steps is False: A batch of generated HR images.
+                  Shape: [num_images, img_channels, img_size, img_size].
+                - If return_intermediate_steps is True: A list of torch.Tensors, where each tensor
+                  represents the image latents at an intermediate denoising step. The last
+                  element in the list is the final generated HR image.
+        """
+        model.eval()
+        model.to(self.device)
+
+        print(f"Generating {num_images} hr_images using {num_inference_steps} steps "
+              f"with {type(self.scheduler).__name__} (model expected to predict: '{self.predict_mode}') "
+              f"on device {self.device}...")
+
+        self.scheduler.set_timesteps(num_inference_steps, device=self.device)
+
+        image_latents = torch.randn(
+            (num_images, self.img_channels, self.img_size, self.img_size),
+            device=self.device
+        )
+        image_latents = image_latents * self.scheduler.init_noise_sigma
+
+        intermediate_latents_list = []
+        if return_intermediate_steps:
+            intermediate_latents_list.append(image_latents.clone())
+
+        for t_step in tqdm(self.scheduler.timesteps, desc="Generating hr_images"):
+            model_input = image_latents
+            t_for_model = t_step.unsqueeze(
+                0).expand(num_images).to(self.device)
+            model_output = model(model_input, t_for_model, condition=features)
+            scheduler_output = self.scheduler.step(
+                model_output, t_step, image_latents)
+            image_latents = scheduler_output.prev_sample
+
+            if return_intermediate_steps:
+                intermediate_latents_list.append(image_latents.clone())
+
+        generated_hr_images = image_latents
+        print("Hr image generation complete.")
+
+        if return_intermediate_steps:
+            return intermediate_latents_list
+        else:
+            return generated_hr_images
+
+    @torch.no_grad()
+    def generate_hr_images_batch(self, model, list_of_features, num_inference_steps=50):
+        """
+        Generates multiple HR images in parallel from a list of feature sets.
+
+        This method concatenates each corresponding feature tensor from the list into a single
+        batch, allowing for efficient parallel generation on a GPU.
+
+        Args:
+            model (torch.nn.Module): The pre-trained diffusion model (e.g., a U-Net).
+            list_of_features (list[list[torch.Tensor]]): A list where each element is a set of
+                                                          features for generating one image.
+                                                          For example: [[feat1_imgA, feat2_imgA], [feat1_imgB, feat2_imgB]].
+            num_inference_steps (int, optional): Number of denoising steps. Defaults to 50.
+
+        Returns:
+            torch.Tensor: A single tensor containing a batch of all generated HR images.
+                          Shape: [num_images, img_channels, img_size, img_size].
+        """
+        model.eval()
+        model.to(self.device)
+
+        if not list_of_features or not all(isinstance(f, list) for f in list_of_features):
+            raise ValueError(
+                "list_of_features must be a list of lists of tensors.")
+
+        num_images = len(list_of_features)
+        print(f"Starting parallel generation for {num_images} hr_images...")
+
+        # --- Batching the features ---
+        # This part assumes that the structure of features is consistent across all items in the list.
+        # e.g., list_of_features = [[feat_A1, feat_B1], [feat_A2, feat_B2], ...]
+        # We want to create batched_features = [torch.cat([feat_A1, feat_A2]), torch.cat([feat_B1, feat_B2])]
+        num_feature_levels = len(list_of_features[0])
+        batched_features = []
+        for i in range(num_feature_levels):
+            # Concatenate the i-th feature from each set of features along the batch dimension (dim=0)
+            feature_level_batch = torch.cat(
+                [features[i] for features in list_of_features], dim=0)
+            batched_features.append(feature_level_batch.to(self.device))
+
+        print(
+            f"Batched {len(batched_features)} feature levels. Example shape of first level: {batched_features[0].shape}")
+
+        self.scheduler.set_timesteps(num_inference_steps, device=self.device)
+
+        # Initialize noise for the entire batch
+        image_latents = torch.randn(
+            (num_images, self.img_channels, self.img_size, self.img_size),
+            device=self.device
+        )
+        image_latents = image_latents * self.scheduler.init_noise_sigma
+
+        # Denoising loop for the whole batch
+        for t_step in tqdm(self.scheduler.timesteps, desc=f"Generating {num_images} hr_images"):
+            model_input = image_latents
+            t_for_model = t_step.unsqueeze(
+                0).expand(num_images).to(self.device)
+
+            # The model receives the batched features
+            model_output = model(model_input, t_for_model,
+                                 condition=batched_features)
+
+            scheduler_output = self.scheduler.step(
+                model_output, t_step, image_latents)
+            image_latents = scheduler_output.prev_sample
+
+        generated_hr_images = image_latents
+        print("Parallel hr_image generation complete.")
+        return generated_hr_images

@@ -21,7 +21,7 @@ sys.path.append(project_root)
 # Import your project modules
 from src.data_handling.dataset import ImageDataset, ImageDatasetRRDB
 from src.trainers.rrdb_trainer import BasicRRDBNetTrainer
-from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator
+from src.trainers.diffusion_trainer import DiffusionTrainer, ResidualGenerator, ImageGenerator
 
 class ImageQualityEvaluator:
     """
@@ -302,6 +302,136 @@ def evaluate_diffusion_model_batched(args):
 
 
 
+def evaluate_diffusion_noiseto_hr_batched(args):
+    """
+    Evaluate diffusion model in NoiseToHR mode using batch processing.
+    
+    In NoiseToHR mode, the diffusion model generates full HR images directly from noise,
+    conditioned on features extracted from LR images. No RRDB baseline is used.
+    
+    This is different from the Residual mode where:
+    - Residual mode: refined_HR = RRDB_upscaled + diffusion_residuals
+    - NoiseToHR mode: generated_HR = diffusion_output (direct generation)
+    
+    Args:
+        args: An object or dictionary containing configuration, including:
+              - rrdb_context_model_path (str): Path to the RRDBNet model for feature extraction.
+              - diffusion_model_path (str): Path to the U-Net model.
+              - test_data_folder (str): Path to folder containing HR images.
+              - img_size (int): Image size.
+              - downscale_factor (int): Downscaling factor.
+              - max_samples (int): Maximum number of samples to evaluate.
+              - num_inference_steps (int): Number of steps for diffusion generation.
+              - batch_size (int): Number of images to process in each batch.
+              - device (str): The device to run on ('cuda' or 'cpu').
+    
+    Returns:
+        dict: Dictionary containing average metrics and their standard deviations.
+    """
+    print("Evaluating Diffusion model in NoiseToHR mode with batch processing...")
+
+    # 1. --- Initialization ---
+    device = args.device
+    
+    # Load RRDBNet context extractor (for feature extraction from LR)
+    context_model = BasicRRDBNetTrainer.load_model_for_evaluation(
+        model_path=args.rrdb_context_model_path,
+        device=device
+    ).eval()
+
+    # Load U-Net diffusion model
+    unet = DiffusionTrainer.load_diffusion_unet(
+        args.diffusion_model_path,
+        device=device
+    ).eval()
+
+    # Create ImageGenerator (for NoiseToHR mode)
+    generator = ImageGenerator(
+        img_size=args.img_size,  # Should match training (e.g., 160)
+        device=device,
+        predict_mode='noise'  # or 'v_prediction' depending on how model was trained
+    )
+
+    # Load dataset - uses ImageDataset (NOT ImageDatasetRRDB)
+    # Only needs HR images, LR and bicubic are generated on-the-fly
+    dataset = ImageDataset(
+        folder_path=args.test_data_folder,
+        img_size=args.img_size,
+        downscale_factor=args.downscale_factor,
+        apply_hflip=False
+    )
+    
+    # Use a subset of the dataset if max_samples is specified
+    if args.max_samples < len(dataset):
+        dataset = torch.utils.data.Subset(dataset, range(args.max_samples))
+
+    # Create DataLoader for efficient batching
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,  # Keep order for consistent evaluation
+        num_workers=4,  # Adjust based on your system
+        pin_memory=True
+    )
+
+    evaluator = ImageQualityEvaluator(device=device)
+    all_metrics = []
+
+    print(f"Evaluating on {len(dataset)} samples with batch size {args.batch_size}...")
+
+    # 2. --- Batch Evaluation Loop ---
+    with torch.no_grad():
+        # Iterate over batches from the DataLoader
+        for batch in tqdm(dataloader, desc="Evaluating NoiseToHR in Batches"):
+            lr_img, bicubic_up, hr_img, _ = batch
+            # Note: bicubic_up is not used in NoiseToHR mode
+
+            # Move the entire batch to the target device
+            lr_img = lr_img.to(device)
+            hr_img = hr_img.to(device)
+
+            # Extract context features for the whole batch at once
+            # This returns (upscaled_output, list_of_features)
+            # where list_of_features contains tensors with shape (batch_size, C, H, W)
+            _, context_features_batched = context_model(lr_img, get_fea=True)
+
+            # Re-structure the batched features into the format expected by
+            # `generate_hr_images_batch`: a list of lists of features.
+            current_batch_size = lr_img.shape[0]
+            list_of_features = []
+            for i in range(current_batch_size):
+                # For each image in the batch, gather its corresponding feature slices
+                features_for_one_image = [feat_level[i:i+1] for feat_level in context_features_batched]
+                list_of_features.append(features_for_one_image)
+
+            # Generate full HR images directly (NoiseToHR mode)
+            generated_hr_batch = generator.generate_hr_images_batch(
+                model=unet,
+                list_of_features=list_of_features,
+                num_inference_steps=args.num_inference_steps,
+            )
+
+            # KEY DIFFERENCE from Residual mode:
+            # No addition operation! The generated images ARE the final output.
+            # Residual mode: refined_hr = rrdb_upscaled + residuals
+            # NoiseToHR mode: generated_hr is already the final HR image
+
+            # Calculate metrics for the generated batch
+            metrics = evaluator.evaluate_batch(generated_hr_batch, hr_img)
+            all_metrics.append(metrics)
+
+    # 3. --- Aggregate and Return Results ---
+    avg_metrics = {}
+    if all_metrics:
+        for key in all_metrics[0].keys():
+            avg_metrics[key] = np.mean([m[key] for m in all_metrics])
+            avg_metrics[f'{key}_std'] = np.std([m[key] for m in all_metrics])
+    else:
+        print("Warning: No metrics were calculated.")
+
+    return avg_metrics
+
+
 def evaluate_bicubic_baseline(args):
     """Evaluate bicubic interpolation baseline."""
     print("Evaluating Bicubic baseline...")
@@ -430,7 +560,9 @@ def main():
     parser.add_argument('--eval_rrdb', action='store_true',
                         help='Evaluate RRDBNet model')
     parser.add_argument('--eval_diffusion', action='store_true',
-                        help='Evaluate diffusion model')
+                        help='Evaluate diffusion model (Residual mode)')
+    parser.add_argument('--eval_diffusion_noiseto_hr', action='store_true',
+                        help='Evaluate diffusion model in NoiseToHR mode (generates full HR images)')
     
     # RRDBNet arguments
     parser.add_argument('--rrdb_model_path', type=str, help='Path to RRDBNet model checkpoint')
@@ -455,8 +587,8 @@ def main():
     print("="*80)
     
     # Validate arguments
-    if not (args.eval_bicubic or args.eval_rrdb or args.eval_diffusion):
-        parser.error("At least one evaluation flag must be set: --eval_bicubic, --eval_rrdb, or --eval_diffusion")
+    if not (args.eval_bicubic or args.eval_rrdb or args.eval_diffusion or args.eval_diffusion_noiseto_hr):
+        parser.error("At least one evaluation flag must be set: --eval_bicubic, --eval_rrdb, --eval_diffusion, or --eval_diffusion_noiseto_hr")
     
     if args.eval_rrdb and not args.rrdb_model_path:
         parser.error("--rrdb_model_path is required when --eval_rrdb is set")
@@ -468,6 +600,13 @@ def main():
             parser.error("--rrdb_context_model_path is required when --eval_diffusion is set")
         if not args.preprocessed_data_folder:
             parser.error("--preprocessed_data_folder is required when --eval_diffusion is set")
+    
+    if args.eval_diffusion_noiseto_hr:
+        if not args.diffusion_model_path:
+            parser.error("--diffusion_model_path is required when --eval_diffusion_noiseto_hr is set")
+        if not args.rrdb_context_model_path:
+            parser.error("--rrdb_context_model_path is required when --eval_diffusion_noiseto_hr is set")
+        # Note: Does NOT require preprocessed_data_folder (uses test_data_folder only)
     
     # Run evaluations
     results = {}
@@ -490,9 +629,17 @@ def main():
     
     if args.eval_diffusion:
         try:
-            results['Diffusion'] = evaluate_diffusion_model_batched(args)
+            results['Diffusion_Residual'] = evaluate_diffusion_model_batched(args)
         except Exception as e:
-            print(f"Error evaluating diffusion model: {e}")
+            print(f"Error evaluating diffusion model (Residual mode): {e}")
+            import traceback
+            traceback.print_exc()
+    
+    if args.eval_diffusion_noiseto_hr:
+        try:
+            results['Diffusion_NoiseToHR'] = evaluate_diffusion_noiseto_hr_batched(args)
+        except Exception as e:
+            print(f"Error evaluating diffusion model (NoiseToHR mode): {e}")
             import traceback
             traceback.print_exc()
     
